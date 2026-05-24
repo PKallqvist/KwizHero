@@ -5,3 +5,6 @@ dist/
 .env.*
 .firebase/
 *.local
+functions/lib/
+*.tsbuildinfo
+.github-protection.json
