@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validNickname(name) {
+      return name is string && name.size() >= 2 && name.size() <= 32;
+    }
+
+    match /quizzes/{quizId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll([
+        'title', 'description', 'status', 'defaultLocale', 'createdAt', 'updatedAt', 'waypointCount'
+      ]);
+
+      allow update: if false;
+    }
+
+    match /quizSecrets/{quizId} {
+      allow read: if false;
+      allow create: if request.resource.data.keys().hasAll(['editKeyHash', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    match /quizRules/{quizId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if false;
+    }
+
+    match /quizzes/{quizId}/waypoints/{waypointId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if false;
+    }
+
+    match /quizzes/{quizId}/waypoints/{waypointId}/questions/{questionId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if false;
+    }
+
+    match /participantSessions/{sessionId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll([
+        'quizId', 'nickname', 'startedAt', 'status', 'score', 'currentWaypointOrder'
+      ]) && validNickname(request.resource.data.nickname);
+      allow update: if true;
+
+      match /answers/{answerId} {
+        allow read: if true;
+        allow create: if request.resource.data.keys().hasAll([
+          'questionId', 'waypointId', 'selectedChoiceId', 'isCorrect', 'pointsAwarded', 'answeredAt', 'elapsedMs'
+        ]);
+      }
+    }
+  }
+}

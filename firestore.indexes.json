@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "quizzes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "participantSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "quizId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
