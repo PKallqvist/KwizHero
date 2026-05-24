@@ -6,9 +6,14 @@ import { MantineProvider } from "@mantine/core";
 import { App } from "./App";
 import { i18n } from "./platform/i18n/i18n";
 import { kwizTheme } from "./theme/kwizTheme";
+import { registerSW } from "virtual:pwa-register";
 import "@mantine/core/styles.css";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
+
+registerSW({
+  immediate: true,
+});
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
