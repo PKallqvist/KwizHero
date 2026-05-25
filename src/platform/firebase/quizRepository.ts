@@ -15,10 +15,11 @@ import {
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
-import { auth, db, functions } from "./firebase";
-import type { AnswerResult, FirstPlayable, QuizDraftInput, QuizSummary } from "../../domain/types";
+import { getFirebaseServices } from "./firebase";
+import type { AnswerResult, FirstPlayable, QuizDraftInput, QuizSummary, QuizWalk, QuestionType } from "../../domain/types";
 
 async function getAnonymousUid(): Promise<string> {
+  const { auth } = getFirebaseServices();
   if (auth.currentUser) return auth.currentUser.uid;
   const credential = await signInAnonymously(auth);
   return credential.user.uid;
@@ -42,6 +43,7 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQuiz> {
+  const { db } = getFirebaseServices();
   const editKey = randomKey();
   const editKeyHash = await sha256Hex(editKey);
   const quizRef = await addDoc(collection(db, "quizzes"), {
@@ -64,6 +66,7 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     openAt: input.ruleset.openAt,
     closeAt: input.ruleset.closeAt,
     questionTimeLimitSeconds: input.ruleset.questionTimeLimitSeconds,
+    interQuestionTimeLimitSeconds: input.ruleset.interQuestionTimeLimitSeconds,
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
@@ -86,11 +89,18 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
 
     for (let qIndex = 0; qIndex < waypoint.questions.length; qIndex += 1) {
       const question = waypoint.questions[qIndex];
+      const choiceDocs = question.choices.map((c, index) => ({ id: `c${index + 1}`, text: c }));
       await addDoc(collection(db, `quizzes/${quizRef.id}/waypoints/${waypointRef.id}/questions`), {
         order: qIndex + 1,
+        schemaVersion: 2,
+        questionType: question.questionType,
         text: question.text,
-        choices: question.choices.map((c, index) => ({ id: `c${index + 1}`, text: c })),
-        correctChoiceId: `c${question.correctIndex + 1}`,
+        choices: choiceDocs,
+        correctChoiceId: question.correctIndex !== null ? `c${question.correctIndex + 1}` : null,
+        numericAnswer: question.numericAnswer,
+        numericTolerance: question.config.numericTolerance,
+        letterOrderAnswer: question.letterOrderAnswer,
+        timerSeconds: question.config.timerSeconds,
         pointsIfCorrect: 1,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -102,11 +112,13 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
 }
 
 export async function publishQuiz(quizId: string, editKey: string): Promise<void> {
+  const { functions } = getFirebaseServices();
   const callPublish = httpsCallable(functions, "publishQuizCallable");
   await callPublish({ quizId, editKey });
 }
 
 export async function getQuizSummary(quizId: string): Promise<QuizSummary | null> {
+  const { db } = getFirebaseServices();
   const quizDoc = await getDoc(doc(db, "quizzes", quizId));
   const rulesDoc = await getDoc(doc(db, "quizRules", quizId));
   if (!quizDoc.exists() || !rulesDoc.exists()) {
@@ -121,6 +133,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
   const r = rulesDoc.data() as {
     openAt: string;
     closeAt: string;
+    questionTimeLimitSeconds: number | null;
+    interQuestionTimeLimitSeconds: number | null;
     revealMode: "instant" | "on_completion" | "scheduled";
     revealAt: string | null;
   };
@@ -132,12 +146,70 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     status: q.status,
     openAt: r.openAt,
     closeAt: r.closeAt,
+    questionTimeLimitSeconds: r.questionTimeLimitSeconds ?? null,
+    interQuestionTimeLimitSeconds: r.interQuestionTimeLimitSeconds ?? null,
     revealMode: r.revealMode ?? "instant",
     revealAt: r.revealAt ?? null,
   };
 }
 
+export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
+  const { db } = getFirebaseServices();
+  const quizDoc = await getDoc(doc(db, "quizzes", quizId));
+  if (!quizDoc.exists()) {
+    return null;
+  }
+
+  const quizData = quizDoc.data() as { title: string };
+  const waypointQuery = query(collection(db, `quizzes/${quizId}/waypoints`), orderBy("order", "asc"));
+  const waypointSnapshot = await getDocs(waypointQuery);
+
+  const waypoints = await Promise.all(
+    waypointSnapshot.docs.map(async (waypointDoc) => {
+      const waypointData = waypointDoc.data() as { order: number; title: string; lat: number; lng: number };
+      const questionQuery = query(
+        collection(db, `quizzes/${quizId}/waypoints/${waypointDoc.id}/questions`),
+        orderBy("order", "asc")
+      );
+      const questionSnapshot = await getDocs(questionQuery);
+
+      return {
+        id: waypointDoc.id,
+        order: waypointData.order,
+        title: waypointData.title,
+        lat: waypointData.lat,
+        lng: waypointData.lng,
+        questions: questionSnapshot.docs.map((questionDoc) => {
+          const questionData = questionDoc.data() as {
+            order: number;
+            questionType?: QuestionType;
+            text: string;
+            choices: Array<{ id: string; text: string }>;
+            pointsIfCorrect: number;
+            timerSeconds?: number | null;
+          };
+          return {
+            id: questionDoc.id,
+            order: questionData.order,
+            questionType: questionData.questionType ?? "multiple_choice",
+            text: questionData.text,
+            choices: questionData.choices ?? [],
+            pointsIfCorrect: questionData.pointsIfCorrect,
+            config: {
+              timerSeconds: questionData.timerSeconds ?? null,
+              numericTolerance: null,
+            },
+          };
+        }),
+      };
+    })
+  );
+
+  return { quizId, title: quizData.title, waypoints };
+}
+
 export async function startSession(quizId: string, nickname: string): Promise<string> {
+  const { db } = getFirebaseServices();
   const anonymousUid = await getAnonymousUid();
   const sessionRef = await addDoc(collection(db, "participantSessions"), {
     quizId,
@@ -153,6 +225,7 @@ export async function startSession(quizId: string, nickname: string): Promise<st
 }
 
 export async function getFirstPlayable(quizId: string): Promise<FirstPlayable | null> {
+  const { db } = getFirebaseServices();
   const rulesDoc = await getDoc(doc(db, "quizRules", quizId));
   if (!rulesDoc.exists()) {
     return null;
@@ -184,9 +257,11 @@ export async function getFirstPlayable(quizId: string): Promise<FirstPlayable | 
 
   const firstQuestionDoc = questionSnapshot.docs[0];
   const questionData = firstQuestionDoc.data() as {
+    questionType?: QuestionType;
     text: string;
     choices: Array<{ id: string; text: string }>;
     pointsIfCorrect: number;
+    timerSeconds?: number | null;
   };
 
   return {
@@ -199,14 +274,20 @@ export async function getFirstPlayable(quizId: string): Promise<FirstPlayable | 
     },
     question: {
       id: firstQuestionDoc.id,
+      questionType: questionData.questionType ?? "multiple_choice",
       text: questionData.text,
-      choices: questionData.choices,
+      choices: questionData.choices ?? [],
       pointsIfCorrect: questionData.pointsIfCorrect,
+      config: {
+        timerSeconds: questionData.timerSeconds ?? null,
+        numericTolerance: null,
+      },
     },
   };
 }
 
 export async function getWaypointCount(quizId: string): Promise<number> {
+  const { db } = getFirebaseServices();
   const snapshot = await getCountFromServer(collection(db, `quizzes/${quizId}/waypoints`));
   return snapshot.data().count;
 }
@@ -217,8 +298,11 @@ export async function submitFirstAnswer(params: {
   waypointId: string;
   questionId: string;
   selectedChoiceId: string;
+  numericAnswer?: number | null;
+  letterOrderAnswer?: string | null;
   elapsedMs: number;
 }): Promise<AnswerResult> {
+  const { db } = getFirebaseServices();
   const questionDoc = await getDoc(
     doc(db, `quizzes/${params.quizId}/waypoints/${params.waypointId}/questions/${params.questionId}`)
   );
@@ -236,17 +320,40 @@ export async function submitFirstAnswer(params: {
   }
 
   const questionData = questionDoc.data() as {
-    correctChoiceId: string;
+    questionType?: QuestionType;
+    correctChoiceId: string | null;
+    numericAnswer?: number | null;
+    numericTolerance?: number | null;
+    letterOrderAnswer?: string | null;
     pointsIfCorrect: number;
   };
 
-  const isCorrect = params.selectedChoiceId === questionData.correctChoiceId;
+  const questionType = questionData.questionType ?? "multiple_choice";
+  let isCorrect = false;
+
+  if (questionType === "numeric") {
+    const expected = questionData.numericAnswer;
+    const submitted = params.numericAnswer;
+    const tolerance = questionData.numericTolerance ?? 0;
+    isCorrect =
+      typeof expected === "number" &&
+      typeof submitted === "number" &&
+      Math.abs(submitted - expected) <= tolerance;
+  } else if (questionType === "letter_order") {
+    const expected = (questionData.letterOrderAnswer ?? "").replace(/\s+/g, "").toUpperCase();
+    const submitted = (params.letterOrderAnswer ?? "").replace(/\s+/g, "").toUpperCase();
+    isCorrect = expected.length > 0 && submitted === expected;
+  } else {
+    isCorrect = params.selectedChoiceId === questionData.correctChoiceId;
+  }
+
   const pointsAwarded = isCorrect ? questionData.pointsIfCorrect : 0;
 
   await addDoc(collection(db, `participantSessions/${params.sessionId}/answers`), {
     questionId: params.questionId,
     waypointId: params.waypointId,
     selectedChoiceId: params.selectedChoiceId,
+    submittedValue: params.numericAnswer ?? params.letterOrderAnswer ?? params.selectedChoiceId,
     isCorrect,
     pointsAwarded,
     elapsedMs: params.elapsedMs,

@@ -11,9 +11,11 @@ import "@mantine/core/styles.css";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
-registerSW({
-  immediate: true,
-});
+if (import.meta.env.PROD) {
+  registerSW({
+    immediate: true,
+  });
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
