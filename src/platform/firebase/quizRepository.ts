@@ -89,14 +89,21 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
 
     for (let qIndex = 0; qIndex < waypoint.questions.length; qIndex += 1) {
       const question = waypoint.questions[qIndex];
-      const choiceDocs = question.choices.map((c, index) => ({ id: `c${index + 1}`, text: c }));
+      const persistedChoices = question.choices
+        .map((choice) => choice.trim())
+        .filter((choice) => choice.length > 0);
+      const choiceDocs = persistedChoices.map((choice, index) => ({ id: `c${index + 1}`, text: choice }));
+      const correctChoiceIds = question.correctChoiceIndexes
+        .filter((index) => Number.isInteger(index) && index >= 0 && index < choiceDocs.length)
+        .map((index) => `c${index + 1}`);
       await addDoc(collection(db, `quizzes/${quizRef.id}/waypoints/${waypointRef.id}/questions`), {
         order: qIndex + 1,
-        schemaVersion: 2,
+        schemaVersion: 3,
         questionType: question.questionType,
         text: question.text,
         choices: choiceDocs,
-        correctChoiceId: question.correctIndex !== null ? `c${question.correctIndex + 1}` : null,
+        correctChoiceIds,
+        correctChoiceId: correctChoiceIds[0] ?? null,
         numericAnswer: question.numericAnswer,
         numericTolerance: question.config.numericTolerance,
         letterOrderAnswer: question.letterOrderAnswer,
@@ -297,7 +304,7 @@ export async function submitFirstAnswer(params: {
   sessionId: string;
   waypointId: string;
   questionId: string;
-  selectedChoiceId: string;
+  selectedChoiceIds: string[];
   numericAnswer?: number | null;
   letterOrderAnswer?: string | null;
   elapsedMs: number;
@@ -321,6 +328,7 @@ export async function submitFirstAnswer(params: {
 
   const questionData = questionDoc.data() as {
     questionType?: QuestionType;
+    correctChoiceIds?: string[];
     correctChoiceId: string | null;
     numericAnswer?: number | null;
     numericTolerance?: number | null;
@@ -344,16 +352,30 @@ export async function submitFirstAnswer(params: {
     const submitted = (params.letterOrderAnswer ?? "").replace(/\s+/g, "").toUpperCase();
     isCorrect = expected.length > 0 && submitted === expected;
   } else {
-    isCorrect = params.selectedChoiceId === questionData.correctChoiceId;
+    const expected = Array.isArray(questionData.correctChoiceIds)
+      ? [...questionData.correctChoiceIds]
+      : questionData.correctChoiceId
+        ? [questionData.correctChoiceId]
+        : [];
+    const submitted = params.selectedChoiceIds.filter((choiceId) => choiceId.trim().length > 0);
+    const expectedSorted = [...new Set(expected)].sort();
+    const submittedSorted = [...new Set(submitted)].sort();
+    isCorrect =
+      expectedSorted.length > 0 &&
+      expectedSorted.length === submittedSorted.length &&
+      expectedSorted.every((choiceId, index) => choiceId === submittedSorted[index]);
   }
 
   const pointsAwarded = isCorrect ? questionData.pointsIfCorrect : 0;
+  const firstSelectedChoiceId = params.selectedChoiceIds[0] ?? "";
+  const submittedChoiceValue = params.selectedChoiceIds.join(",");
 
   await addDoc(collection(db, `participantSessions/${params.sessionId}/answers`), {
     questionId: params.questionId,
     waypointId: params.waypointId,
-    selectedChoiceId: params.selectedChoiceId,
-    submittedValue: params.numericAnswer ?? params.letterOrderAnswer ?? params.selectedChoiceId,
+    selectedChoiceId: firstSelectedChoiceId,
+    selectedChoiceIds: params.selectedChoiceIds,
+    submittedValue: params.numericAnswer ?? params.letterOrderAnswer ?? submittedChoiceValue,
     isCorrect,
     pointsAwarded,
     elapsedMs: params.elapsedMs,

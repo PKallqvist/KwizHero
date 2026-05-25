@@ -21,7 +21,7 @@ export interface DraftQuestionInput {
   questionType: QuestionType;
   text: string;
   choices: string[];
-  correctIndex: number | null;
+  correctChoiceIndexes: number[];
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
   config: QuestionConfig;

@@ -1,0 +1,234 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.app{background:var(--color-background-tertiary);min-height:600px;padding:0}
+.topbar{background:var(--color-background-primary);border-bottom:0.5px solid var(--color-border-tertiary);padding:0 20px;height:48px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-weight:500;font-size:15px;color:var(--color-text-primary)}
+.topnav{display:flex;gap:20px}
+.topnav a{font-size:13px;color:var(--color-text-secondary);text-decoration:none}
+.topnav a.active{color:var(--color-text-primary);font-weight:500}
+.stepper{background:var(--color-background-primary);border-bottom:0.5px solid var(--color-border-tertiary);padding:0 20px;height:52px;display:flex;align-items:center;gap:0}
+.step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--color-text-tertiary);padding:0 16px}
+.step.done{color:#1D9E75}
+.step.active{color:var(--color-text-primary);font-weight:500}
+.step-num{width:24px;height:24px;border-radius:50%;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0}
+.step.done .step-num{background:#1D9E75;border-color:#1D9E75;color:#fff}
+.step-line{flex:1;height:1px;background:var(--color-border-tertiary);min-width:24px}
+.step-line.done{background:#1D9E75}
+.main{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 100px);min-height:500px}
+.left-col{background:var(--color-background-primary);border-right:0.5px solid var(--color-border-tertiary);display:flex;flex-direction:column;overflow:hidden}
+.right-col{background:var(--color-background-secondary);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:24px 24px 16px;overflow:auto}
+.section-label{font-size:11px;font-weight:500;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;padding:16px 16px 8px}
+.waypoint-pills{display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 12px}
+.pill{padding:6px 12px;border-radius:20px;font-size:12px;font-weight:500;cursor:pointer;border:1.5px solid transparent;transition:all .15s}
+.pill.inactive{background:var(--color-background-secondary);color:var(--color-text-secondary);border-color:var(--color-border-tertiary)}
+.pill.active-wp{background:#E1F5EE;color:#0F6E56;border-color:#5DCAA5}
+.pill.orange{background:#FAEEDA;color:#854F0B;border-color:#EF9F27}
+.map-area{flex:1;background:#e8ede8;position:relative;margin:0 16px 16px;border-radius:var(--border-radius-lg);overflow:hidden;min-height:180px}
+.map-img{width:100%;height:100%;object-fit:cover;opacity:.85}
+.map-pin{position:absolute;bottom:40%;left:55%;transform:translate(-50%,-50%)}
+.pin-dot{width:14px;height:14px;border-radius:50%;background:#1D9E75;border:3px solid white}
+.pin-label{background:white;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:500;color:var(--color-text-primary);margin-top:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.map-hint{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.92);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--color-text-secondary);white-space:nowrap}
+.q-nav{padding:12px 16px;border-top:0.5px solid var(--color-border-tertiary);display:flex;align-items:center;gap:8px}
+.q-select{flex:1;font-size:13px;padding:7px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary)}
+.btn-sm{padding:6px 12px;border-radius:var(--border-radius-md);font-size:12px;font-weight:500;cursor:pointer;border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-secondary);display:flex;align-items:center;gap:4px}
+.btn-sm:hover{background:var(--color-background-secondary)}
+.btn-teal{background:#E1F5EE;color:#0F6E56;border-color:#5DCAA5}
+.btn-teal:hover{background:#9FE1CB}
+.badge-wp{background:#E1F5EE;color:#0F6E56;border:0.5px solid #5DCAA5;border-radius:20px;font-size:11px;padding:3px 8px;font-weight:500}
+.phone-wrap{display:flex;flex-direction:column;align-items:center;width:100%}
+.phone-label{font-size:11px;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;align-self:flex-start}
+.phone-tabs{display:flex;gap:6px;margin-bottom:16px;align-self:flex-start}
+.ptab{padding:5px 14px;border-radius:20px;font-size:12px;cursor:pointer;border:0.5px solid var(--color-border-secondary);color:var(--color-text-secondary);background:var(--color-background-primary)}
+.ptab.active{background:var(--color-text-primary);color:var(--color-background-primary);border-color:var(--color-text-primary)}
+.phone{width:240px;background:#f9f9f9;border-radius:28px;border:7px solid #1a1a1a;overflow:hidden;position:relative;box-shadow:none}
+.phone-notch{height:28px;background:#1a1a1a;display:flex;align-items:center;justify-content:center}
+.notch-pill{width:60px;height:6px;background:#333;border-radius:3px}
+.phone-screen{background:white;padding:16px;min-height:360px}
+.q-label{font-size:10px;color:#1D9E75;font-weight:600;letter-spacing:.08em;margin-bottom:6px}
+.q-text{font-size:14px;font-weight:500;color:#111;margin-bottom:14px;line-height:1.4}
+.answer-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.answer-card{padding:10px;border-radius:10px;font-size:12px;font-weight:500;text-align:center;border:1.5px solid}
+.ans-a{background:#FFF3E0;color:#E65100;border-color:#FFAB40}
+.ans-b{background:#E8F5E9;color:#1B5E20;border-color:#66BB6A}
+.ans-c{background:#E3F2FD;color:#0D47A1;border-color:#64B5F6}
+.ans-d{background:#F3E5F5;color:#4A148C;border-color:#CE93D8}
+.wp-badge-phone{display:inline-block;background:#E1F5EE;color:#0F6E56;border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;margin-bottom:10px}
+.form-section{width:100%;max-width:560px;margin-top:20px}
+.form-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:16px;margin-bottom:12px}
+.form-title{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:10px}
+.form-row{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.form-label{font-size:12px;color:var(--color-text-secondary)}
+.form-input{padding:8px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);font-size:13px;background:var(--color-background-primary);color:var(--color-text-primary);width:100%}
+.type-tabs{display:flex;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);overflow:hidden}
+.type-tab{flex:1;padding:7px;font-size:12px;text-align:center;cursor:pointer;border:none;background:var(--color-background-primary);color:var(--color-text-secondary)}
+.type-tab.active{background:var(--color-text-primary);color:var(--color-background-primary)}
+.choices-list{display:flex;flex-direction:column;gap:6px}
+.choice-row{display:flex;align-items:center;gap:8px}
+.choice-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.choice-input{flex:1;padding:7px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);font-size:13px;background:var(--color-background-primary);color:var(--color-text-primary)}
+.choice-correct{border-color:#5DCAA5;background:#E1F5EE}
+.check{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--color-border-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.check.on{background:#1D9E75;border-color:#1D9E75}
+.bottom-bar{background:var(--color-background-primary);border-top:0.5px solid var(--color-border-tertiary);padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+.btn-back{padding:8px 20px;border-radius:var(--border-radius-md);font-size:13px;border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-secondary);cursor:pointer}
+.btn-next{padding:8px 24px;border-radius:var(--border-radius-md);font-size:13px;font-weight:500;border:none;background:#1D9E75;color:white;cursor:pointer}
+.btn-next:disabled{background:var(--color-background-secondary);color:var(--color-text-tertiary)}
+.add-q-row{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+</style>
+<h2 class="sr-only">KwizHero create quiz — redesigned layout mockup showing left column with waypoints and map, right column with phone preview and question editor</h2>
+
+<div class="app">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:24px">
+      <span class="logo">KwizHero</span>
+      <nav class="topnav">
+        <a href="#" class="active">Create quiz</a>
+        <a href="#">Play quiz</a>
+      </nav>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:12px;color:var(--color-text-tertiary)">EN</span>
+    </div>
+  </div>
+
+  <div class="stepper">
+    <div class="step done"><div class="step-num"><i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i></div><span>Identity</span></div>
+    <div class="step-line done"></div>
+    <div class="step done"><div class="step-num"><i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i></div><span>Rules</span></div>
+    <div class="step-line done"></div>
+    <div class="step done"><div class="step-num"><i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i></div><span>Route</span></div>
+    <div class="step-line"></div>
+    <div class="step active"><div class="step-num">4</div><span>Questions</span></div>
+    <div class="step-line"></div>
+    <div class="step"><div class="step-num">5</div><span>Publish</span></div>
+  </div>
+
+  <div class="main">
+    <div class="left-col">
+      <div class="section-label">Waypoints</div>
+      <div class="waypoint-pills">
+        <div class="pill inactive">1. Stampen <span style="opacity:.5">1Q</span></div>
+        <div class="pill orange">2. Ullevi <span style="opacity:.6">1Q</span></div>
+      </div>
+      <div style="padding:0 16px 8px;display:flex;gap:8px;align-items:center">
+        <span class="badge-wp"><i class="ti ti-map-pin" style="font-size:11px" aria-hidden="true"></i> Ullevi selected</span>
+        <span style="font-size:11px;color:var(--color-text-tertiary)">tap map to reposition</span>
+      </div>
+      <div class="map-area">
+        <svg viewBox="0 0 308 200" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+          <rect width="308" height="200" fill="#dde8dd"/>
+          <rect x="0" y="60" width="120" height="80" rx="2" fill="#c8d8c4"/>
+          <rect x="130" y="30" width="100" height="60" rx="2" fill="#c8d8c4"/>
+          <rect x="50" y="90" width="180" height="4" fill="#b8c8b4"/>
+          <rect x="0" y="140" width="308" height="4" fill="#b0c0ac"/>
+          <rect x="140" y="0" width="4" height="200" fill="#b8c8b4"/>
+          <rect x="60" y="0" width="3" height="200" fill="#c4d4c0" opacity=".6"/>
+          <rect x="200" y="0" width="3" height="200" fill="#c4d4c0" opacity=".6"/>
+          <rect x="0" y="100" width="308" height="3" fill="#c4d4c0" opacity=".5"/>
+          <ellipse cx="180" cy="115" rx="28" ry="20" fill="#b4e8c4" opacity=".7"/>
+          <text x="64" y="82" font-size="9" fill="#7a9478" font-family="sans-serif">Stampen</text>
+          <text x="148" y="107" font-size="9" fill="#7a9478" font-family="sans-serif">Ullevi</text>
+          <circle cx="90" cy="78" r="6" fill="#5DCAA5" stroke="white" stroke-width="2.5"/>
+          <circle cx="170" cy="108" r="8" fill="#EF9F27" stroke="white" stroke-width="3"/>
+          <circle cx="170" cy="108" r="3" fill="white"/>
+          <rect x="118" y="94" width="52" height="16" rx="4" fill="white" opacity=".92"/>
+          <text x="144" y="106" font-size="9" fill="#333" text-anchor="middle" font-family="sans-serif">2. Ullevi</text>
+        </svg>
+      </div>
+
+      <div class="q-nav">
+        <button class="btn-sm" aria-label="Previous question"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>
+        <select class="q-select" aria-label="Select question">
+          <option>Q1 — Untitled</option>
+        </select>
+        <button class="btn-sm" aria-label="Next question"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>
+        <button class="btn-sm btn-teal"><i class="ti ti-plus" aria-hidden="true"></i> Add</button>
+      </div>
+    </div>
+
+    <div class="right-col">
+      <div style="width:100%;max-width:580px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div class="phone-label" style="margin:0">Phone preview</div>
+          <div class="phone-tabs">
+            <div class="ptab">Back</div>
+            <div class="ptab">Countdown</div>
+            <div class="ptab active">Front</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:24px;align-items:flex-start">
+          <div class="phone">
+            <div class="phone-notch"><div class="notch-pill"></div></div>
+            <div class="phone-screen">
+              <div class="wp-badge-phone">WAYPOINT 2 · ULLEVI</div>
+              <div class="q-label">QUESTION 1</div>
+              <div class="q-text">Question text</div>
+              <div class="answer-grid">
+                <div class="answer-card ans-a">Choice A</div>
+                <div class="answer-card ans-b">Choice B</div>
+                <div class="answer-card ans-c">Choice C</div>
+                <div class="answer-card ans-d">+</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section" style="margin:0;flex:1">
+            <div class="form-card">
+              <div class="form-title">Question type</div>
+              <div class="type-tabs" role="group" aria-label="Question type">
+                <button class="type-tab active">A/B/C</button>
+                <button class="type-tab">123</button>
+                <button class="type-tab">ABC</button>
+              </div>
+            </div>
+
+            <div class="form-card">
+              <div class="form-row">
+                <label class="form-label" for="q-text-input">Question text</label>
+                <input id="q-text-input" class="form-input" type="text" placeholder="E.g. What year was Ullevi built?" />
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:36px;height:20px;border-radius:10px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary);position:relative;cursor:pointer">
+                  <div style="width:14px;height:14px;border-radius:50%;background:var(--color-text-tertiary);position:absolute;top:3px;left:3px;transition:left .15s"></div>
+                </div>
+                <span class="form-label" style="margin:0">Enable timer</span>
+              </div>
+            </div>
+
+            <div class="form-card">
+              <div class="form-title">Answer choices <span style="font-size:11px;font-weight:400;color:var(--color-text-tertiary)">— check the correct one</span></div>
+              <div class="choices-list">
+                <div class="choice-row">
+                  <div class="choice-dot" style="background:#FFAB40"></div>
+                  <input class="choice-input" placeholder="Choice A" />
+                  <div class="check" aria-label="Mark as correct"></div>
+                </div>
+                <div class="choice-row">
+                  <div class="choice-dot" style="background:#66BB6A"></div>
+                  <input class="choice-input" placeholder="Choice B" />
+                  <div class="check" aria-label="Mark as correct"></div>
+                </div>
+                <div class="choice-row">
+                  <div class="choice-dot" style="background:#64B5F6"></div>
+                  <input class="choice-input choice-correct" placeholder="Choice C" value="1958" />
+                  <div class="check on" aria-label="Correct answer"><i class="ti ti-check" style="font-size:11px;color:white" aria-hidden="true"></i></div>
+                </div>
+                <div class="add-q-row">
+                  <button class="btn-sm btn-teal"><i class="ti ti-plus" aria-hidden="true"></i> Add choice</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="btn-back"><i class="ti ti-arrow-left" style="font-size:13px;vertical-align:-1px" aria-hidden="true"></i> Back</button>
+    <div style="font-size:12px;color:var(--color-text-tertiary)">2 waypoints · 1 question each</div>
+    <button class="btn-next">Next <i class="ti ti-arrow-right" style="font-size:13px;vertical-align:-1px" aria-hidden="true"></i></button>
+  </div>
+</div>

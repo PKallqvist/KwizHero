@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { latLngBounds } from "leaflet";
 import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
@@ -8,6 +8,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Image,
   List,
@@ -22,9 +23,11 @@ import {
   TextInput,
   Textarea,
   Switch,
+  Radio,
   Title,
+  VisuallyHidden,
 } from "@mantine/core";
-import { IconAlertCircle, IconCircleCheck, IconQrcode } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconPlus, IconQrcode, IconTrash } from "@tabler/icons-react";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { createDraftQuiz, publishQuiz } from "../../platform/firebase/quizRepository";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
@@ -33,6 +36,7 @@ const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
 type WizardStep = 1 | 2 | 3 | 4 | 5;
+type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 
 interface WaypointPickerProps {
   lat: number;
@@ -101,7 +105,7 @@ function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
       center={[fallbackCenter.lat, fallbackCenter.lng]}
       zoom={13}
       scrollWheelZoom
-      style={{ height: 220, width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
+      style={{ height: 170, width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -145,7 +149,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       questionType,
       text: "",
       choices: [],
-      correctIndex: null,
+      correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: null,
       config: {
@@ -160,7 +164,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       questionType,
       text: "",
       choices: [],
-      correctIndex: null,
+      correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: "",
       config: {
@@ -173,8 +177,8 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
   return {
     questionType,
     text: "",
-    choices: ["", "", "", ""],
-    correctIndex: 0,
+    choices: [],
+    correctChoiceIndexes: [],
     numericAnswer: null,
     letterOrderAnswer: null,
     config: {
@@ -212,10 +216,18 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
     return (question.letterOrderAnswer ?? "").trim().length > 1 ? null : "letter-order answer is too short";
   }
 
-  if (question.choices.length < 2) return "at least two choices are required";
-  if (!question.choices.every((choice) => choice.trim().length > 0)) return "one or more choices are empty";
-  if (typeof question.correctIndex !== "number") return "correct option is missing";
-  if (question.correctIndex < 0 || question.correctIndex >= question.choices.length) return "correct option is out of range";
+  const nonEmptyChoiceCount = question.choices.filter((choice) => choice.trim().length > 0).length;
+  if (nonEmptyChoiceCount < 1) return "at least one response is required";
+  if (!question.choices.every((choice) => choice.trim().length > 0)) return "one or more responses are empty";
+  if (question.correctChoiceIndexes.length === 0) return "mark at least one correct response";
+  const hasOutOfRangeCorrect = question.correctChoiceIndexes.some(
+    (index) => index < 0 || index >= question.choices.length
+  );
+  if (hasOutOfRangeCorrect) return "correct response selection is out of range";
+  const hasEmptyCorrect = question.correctChoiceIndexes.some(
+    (index) => (question.choices[index] ?? "").trim().length === 0
+  );
+  if (hasEmptyCorrect) return "correct response cannot be empty";
 
   return null;
 }
@@ -245,6 +257,20 @@ export function CreateQuizPage(): JSX.Element {
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(firebaseConfigError);
   const [publishing, setPublishing] = useState(false);
+  const [choiceDraft, setChoiceDraft] = useState("");
+  const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
+  const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
+  const [previewPhase, setPreviewPhase] = useState<CreatorPreviewPhase>("front");
+  const [dragQuestionIndex, setDragQuestionIndex] = useState<number | null>(null);
+  const [dragOverQuestionIndex, setDragOverQuestionIndex] = useState<number | null>(null);
+  const [moveMode, setMoveMode] = useState(false);
+  const [moveModePulse, setMoveModePulse] = useState(false);
+  const [focusedQuestionIndex, setFocusedQuestionIndex] = useState<number | null>(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
+  const choiceDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
   const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
@@ -301,19 +327,64 @@ export function CreateQuizPage(): JSX.Element {
     updateCurrentQuestion({ ...currentQuestion, choices: nextChoices });
   }
 
-  function addChoice(): void {
+  function appendChoiceFromDraft(): void {
     if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") return;
-    updateCurrentQuestion({ ...currentQuestion, choices: [...currentQuestion.choices, ""] });
+    const trimmed = choiceDraft.trim();
+    if (trimmed.length === 0) {
+      setChoiceDraftVisible(false);
+      return;
+    }
+
+    const nextChoiceIndex = currentQuestion.choices.length;
+    const nextCorrectIndexes = choiceDraftIsCorrect
+      ? [...currentQuestion.correctChoiceIndexes, nextChoiceIndex]
+      : [...currentQuestion.correctChoiceIndexes];
+    updateCurrentQuestion({
+      ...currentQuestion,
+      choices: [...currentQuestion.choices, trimmed],
+      correctChoiceIndexes: nextCorrectIndexes,
+    });
+
+    setChoiceDraft("");
+    setChoiceDraftIsCorrect(false);
+    setChoiceDraftVisible(true);
+    requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
+  }
+
+  function toggleCorrectChoice(index: number, checked: boolean): void {
+    if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") return;
+
+    const deduped = [...new Set(currentQuestion.correctChoiceIndexes)];
+    const nextCorrectIndexes = checked
+      ? [...deduped, index].sort((a, b) => a - b)
+      : deduped.filter((correctIndex) => correctIndex !== index);
+
+    updateCurrentQuestion({ ...currentQuestion, correctChoiceIndexes: nextCorrectIndexes });
   }
 
   function removeChoice(index: number): void {
     if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") return;
-    if (currentQuestion.choices.length <= 2) return;
+
     const nextChoices = currentQuestion.choices.filter((_, i) => i !== index);
-    let nextCorrect = currentQuestion.correctIndex;
-    if (nextCorrect === index) nextCorrect = 0;
-    if (typeof nextCorrect === "number" && nextCorrect > index) nextCorrect -= 1;
-    updateCurrentQuestion({ ...currentQuestion, choices: nextChoices, correctIndex: nextCorrect });
+    const nextCorrectIndexes = currentQuestion.correctChoiceIndexes
+      .filter((correctIndex) => correctIndex !== index)
+      .map((correctIndex) => (correctIndex > index ? correctIndex - 1 : correctIndex));
+
+    updateCurrentQuestion({
+      ...currentQuestion,
+      choices: nextChoices,
+      correctChoiceIndexes: nextCorrectIndexes,
+    });
+
+    if (nextChoices.length === 0) {
+      setChoiceDraftVisible(true);
+    }
+  }
+
+  function handleChoiceBlur(index: number): void {
+    if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") return;
+    if ((currentQuestion.choices[index] ?? "").trim().length > 0) return;
+    removeChoice(index);
   }
 
   function addWaypoint(): void {
@@ -349,6 +420,58 @@ export function CreateQuizPage(): JSX.Element {
     setSelectedQuestionIndex(nextQuestions.length === 0 ? 0 : Math.max(0, selectedQuestionIndex - 1));
   }
 
+  function reorderQuestionsInCurrentWaypoint(fromIndex: number, toIndex: number): void {
+    if (!currentWaypoint) return;
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || toIndex < 0) return;
+    if (fromIndex >= currentWaypoint.questions.length || toIndex >= currentWaypoint.questions.length) return;
+
+    const nextQuestions = [...currentWaypoint.questions];
+    const [moved] = nextQuestions.splice(fromIndex, 1);
+    nextQuestions.splice(toIndex, 0, moved);
+    updateCurrentWaypoint({ ...currentWaypoint, questions: nextQuestions });
+    setSelectedQuestionIndex(toIndex);
+    setFocusedQuestionIndex(toIndex);
+    setReorderAnnouncement(
+      t("creator.questions.reorderMoved", {
+        from: fromIndex + 1,
+        to: toIndex + 1,
+      })
+    );
+  }
+
+  function handleQuestionPointerDown(index: number): void {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+    longPressTimerRef.current = setTimeout(() => {
+      setSelectedQuestionIndex(index);
+      setMoveMode(true);
+      setMoveModePulse(true);
+      if (moveModePulseTimerRef.current) {
+        clearTimeout(moveModePulseTimerRef.current);
+      }
+      moveModePulseTimerRef.current = setTimeout(() => setMoveModePulse(false), 180);
+    }, 450);
+  }
+
+  function clearLongPressTimer(): void {
+    if (!longPressTimerRef.current) return;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => {
+      if (moveModePulseTimerRef.current) {
+        clearTimeout(moveModePulseTimerRef.current);
+      }
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
   async function onCreate(): Promise<void> {
     setError(null);
     try {
@@ -379,6 +502,77 @@ export function CreateQuizPage(): JSX.Element {
   function previousStep(): void {
     setStep((prev) => (prev > 1 ? ((prev - 1) as WizardStep) : prev));
   }
+
+  const questionCountInCurrentWaypoint = currentWaypoint?.questions.length ?? 0;
+  const hasPreviousQuestion = selectedQuestionIndex > 0;
+  const hasNextQuestion = questionCountInCurrentWaypoint > 0 && selectedQuestionIndex < questionCountInCurrentWaypoint - 1;
+
+  function goToPreviousQuestion(): void {
+    if (!hasPreviousQuestion) return;
+    setSelectedQuestionIndex((prev) => Math.max(0, prev - 1));
+  }
+
+  function goToNextQuestion(): void {
+    if (!hasNextQuestion) return;
+    setSelectedQuestionIndex((prev) => Math.min(questionCountInCurrentWaypoint - 1, prev + 1));
+  }
+
+  function onPreviewPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    previewSwipeStartRef.current = { x: event.clientX, y: event.clientY };
+  }
+
+  function onPreviewPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    const start = previewSwipeStartRef.current;
+    previewSwipeStartRef.current = null;
+    if (!start) return;
+
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 60 || Math.abs(deltaY) > 40) return;
+
+    if (deltaX < 0) {
+      goToNextQuestion();
+      return;
+    }
+    goToPreviousQuestion();
+  }
+
+  function moveSelectedQuestionLeft(): void {
+    if (!hasPreviousQuestion) return;
+    reorderQuestionsInCurrentWaypoint(selectedQuestionIndex, selectedQuestionIndex - 1);
+  }
+
+  function moveSelectedQuestionRight(): void {
+    if (!hasNextQuestion) return;
+    reorderQuestionsInCurrentWaypoint(selectedQuestionIndex, selectedQuestionIndex + 1);
+  }
+
+  useEffect(() => {
+    if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") {
+      setChoiceDraft("");
+      setChoiceDraftIsCorrect(false);
+      setChoiceDraftVisible(false);
+      return;
+    }
+
+    setChoiceDraft("");
+    setChoiceDraftIsCorrect(false);
+    setChoiceDraftVisible(currentQuestion.choices.length === 0);
+  }, [selectedWaypointIndex, selectedQuestionIndex, currentQuestion?.questionType]);
+
+  useEffect(() => {
+    if (!currentWaypoint) return;
+
+    if (selectedQuestionIndex >= currentWaypoint.questions.length) {
+      setSelectedQuestionIndex(Math.max(0, currentWaypoint.questions.length - 1));
+    }
+
+    setDragQuestionIndex(null);
+    setDragOverQuestionIndex(null);
+    setMoveMode(false);
+    setMoveModePulse(false);
+    setFocusedQuestionIndex(null);
+  }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
 
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
@@ -416,6 +610,7 @@ export function CreateQuizPage(): JSX.Element {
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
       <Stack gap="md">
+        <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
         <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}</Text>
 
@@ -708,6 +903,12 @@ export function CreateQuizPage(): JSX.Element {
                       onChange={(value) => setSelectedQuestionIndex(Number(value ?? "0"))}
                     />
                   ) : null}
+                  <Button variant="light" onClick={goToPreviousQuestion} disabled={!hasPreviousQuestion} leftSection={<IconChevronLeft size={16} />}>
+                    {t("creator.questions.navPrevious")}
+                  </Button>
+                  <Button variant="light" onClick={goToNextQuestion} disabled={!hasNextQuestion} rightSection={<IconChevronRight size={16} />}>
+                    {t("creator.questions.navNext")}
+                  </Button>
                   <Button variant="light" onClick={addQuestionToCurrentWaypoint}>
                     {t("creator.questions.addQuestion")}
                   </Button>
@@ -725,6 +926,255 @@ export function CreateQuizPage(): JSX.Element {
 
             {currentQuestion ? (
               <Stack gap="md">
+                <Card withBorder radius="md" p="sm">
+                  <Stack gap="sm">
+                    <Group justify="space-between" align="center">
+                      <Text size="sm" fw={600}>{t("creator.questions.previewTitle")}</Text>
+                      <SegmentedControl
+                        data={[
+                          { value: "back", label: t("creator.questions.previewBack") },
+                          { value: "pre_countdown", label: t("creator.questions.previewCountdown") },
+                          { value: "front", label: t("creator.questions.previewFront") },
+                        ]}
+                        value={previewPhase}
+                        onChange={(value) => setPreviewPhase(value as CreatorPreviewPhase)}
+                      />
+                    </Group>
+
+                    <Group justify="center" align="stretch" wrap="nowrap">
+                      <Button
+                        variant="subtle"
+                        onClick={goToPreviousQuestion}
+                        disabled={!hasPreviousQuestion}
+                        style={{ alignSelf: "center" }}
+                      >
+                        <IconChevronLeft size={20} />
+                      </Button>
+
+                      <Card
+                        withBorder
+                        radius="lg"
+                        p="md"
+                        style={{
+                          width: "100%",
+                          maxWidth: 560,
+                          minHeight: 340,
+                          background: "linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%)",
+                          touchAction: "pan-y",
+                        }}
+                        onPointerDown={onPreviewPointerDown}
+                        onPointerUp={onPreviewPointerUp}
+                      >
+                        <Stack gap="sm">
+                          <Badge variant="light" color="teal">{t("creator.questions.previewQuestionBadge", { number: selectedQuestionIndex + 1 })}</Badge>
+
+                          {previewPhase === "back" ? (
+                            <>
+                              <Text fw={700} size="lg">{t("creator.questions.previewQuestionCardTitle")}</Text>
+                              <Text c="dimmed">{t("creator.questions.previewQuestionCardHint")}</Text>
+                            </>
+                          ) : null}
+
+                          {previewPhase === "pre_countdown" ? (
+                            <Stack align="center" gap="xs">
+                              <Text c="dimmed">{t("creator.questions.previewCountdownHint")}</Text>
+                              <Title order={1}>3</Title>
+                            </Stack>
+                          ) : null}
+
+                          {previewPhase === "front" ? (
+                            <>
+                              <Title order={4}>{currentQuestion.text || t("creator.questions.labelText")}</Title>
+                              {currentQuestion.config.timerSeconds !== null ? (
+                                <Badge color="orange" leftSection={<IconClock size={14} />}>
+                                  {`${currentQuestion.config.timerSeconds}s`}
+                                </Badge>
+                              ) : null}
+
+                              {currentQuestion.questionType === "multiple_choice" ? (
+                                <Radio.Group value="preview-readonly">
+                                  <Stack gap="xs">
+                                    {currentQuestion.choices.map((choice, index) => (
+                                      <Group key={`preview-choice-${index}`} wrap="nowrap">
+                                        <Checkbox readOnly checked={currentQuestion.correctChoiceIndexes.includes(index)} />
+                                        <Text>{choice || t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + index) })}</Text>
+                                      </Group>
+                                    ))}
+                                  </Stack>
+                                </Radio.Group>
+                              ) : null}
+
+                              {currentQuestion.questionType === "numeric" ? (
+                                <NumberInput label={t("creator.questions.numericAnswer")} value={currentQuestion.numericAnswer ?? undefined} disabled />
+                              ) : null}
+
+                              {currentQuestion.questionType === "letter_order" ? (
+                                <TextInput label={t("creator.questions.letterOrderAnswer")} value={currentQuestion.letterOrderAnswer ?? ""} disabled />
+                              ) : null}
+                            </>
+                          ) : null}
+                        </Stack>
+                      </Card>
+
+                      <Button
+                        variant="subtle"
+                        onClick={goToNextQuestion}
+                        disabled={!hasNextQuestion}
+                        style={{ alignSelf: "center" }}
+                      >
+                        <IconChevronRight size={20} />
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="sm">
+                  <Stack gap="sm">
+                    <Group justify="space-between" align="center" wrap="wrap">
+                      <Text size="sm" fw={600}>{t("creator.questions.reorderTitle")}</Text>
+                      <Text size="xs" c="dimmed">{t("creator.questions.reorderHint")}</Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">{t("creator.questions.reorderKeyboardHint")}</Text>
+
+                    <Group gap="xs" wrap="wrap">
+                      {currentWaypoint.questions.map((question, index) => {
+                        const isSelected = selectedQuestionIndex === index;
+                        const isValid = isQuestionValid(question);
+                        const isDragSource = dragQuestionIndex === index;
+                        const isDropTarget = dragOverQuestionIndex === index && dragQuestionIndex !== index;
+                        return (
+                          <Paper
+                            key={`question-order-item-${index}`}
+                            withBorder
+                            radius="md"
+                            p="xs"
+                            draggable
+                            tabIndex={0}
+                            role="button"
+                            aria-label={t("creator.questions.previewQuestionBadge", { number: index + 1 })}
+                            onDragStart={() => {
+                              setDragQuestionIndex(index);
+                              setSelectedQuestionIndex(index);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              setDragOverQuestionIndex(index);
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverQuestionIndex === index) {
+                                setDragOverQuestionIndex(null);
+                              }
+                            }}
+                            onDrop={() => {
+                              if (dragQuestionIndex === null) return;
+                              reorderQuestionsInCurrentWaypoint(dragQuestionIndex, index);
+                              setDragQuestionIndex(null);
+                              setDragOverQuestionIndex(null);
+                            }}
+                            onDragEnd={() => {
+                              setDragQuestionIndex(null);
+                              setDragOverQuestionIndex(null);
+                            }}
+                            onClick={() => setSelectedQuestionIndex(index)}
+                            onFocus={() => {
+                              setSelectedQuestionIndex(index);
+                              setFocusedQuestionIndex(index);
+                            }}
+                            onBlur={() => {
+                              if (focusedQuestionIndex === index) {
+                                setFocusedQuestionIndex(null);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if ((event.key === "Enter" || event.key === " ") && !event.repeat) {
+                                event.preventDefault();
+                                const nextMoveMode = !moveMode;
+                                setMoveMode(nextMoveMode);
+                                if (nextMoveMode) {
+                                  setMoveModePulse(true);
+                                  if (moveModePulseTimerRef.current) {
+                                    clearTimeout(moveModePulseTimerRef.current);
+                                  }
+                                  moveModePulseTimerRef.current = setTimeout(() => setMoveModePulse(false), 180);
+                                }
+                                return;
+                              }
+
+                              if (event.key === "Escape") {
+                                setMoveMode(false);
+                                setReorderAnnouncement(t("creator.questions.reorderDone"));
+                                return;
+                              }
+
+                              if (event.key === "ArrowLeft" && (event.ctrlKey || moveMode) && index > 0) {
+                                event.preventDefault();
+                                reorderQuestionsInCurrentWaypoint(index, index - 1);
+                                return;
+                              }
+
+                              if (
+                                event.key === "ArrowRight" &&
+                                (event.ctrlKey || moveMode) &&
+                                index < currentWaypoint.questions.length - 1
+                              ) {
+                                event.preventDefault();
+                                reorderQuestionsInCurrentWaypoint(index, index + 1);
+                              }
+                            }}
+                            onPointerDown={() => handleQuestionPointerDown(index)}
+                            onPointerUp={clearLongPressTimer}
+                            onPointerLeave={clearLongPressTimer}
+                            style={{
+                              cursor: "grab",
+                              borderStyle: isDropTarget ? "dashed" : "solid",
+                              borderWidth: isDropTarget ? 2 : 1,
+                              borderColor: isSelected ? "var(--mantine-color-teal-6)" : undefined,
+                              background: isSelected ? "var(--mantine-color-teal-0)" : undefined,
+                              outline: focusedQuestionIndex === index ? "2px solid var(--mantine-color-blue-6)" : "none",
+                              outlineOffset: focusedQuestionIndex === index ? 2 : 0,
+                              opacity: isDragSource ? 0.45 : 1,
+                              transform: moveModePulse && isSelected ? "scale(1.025)" : "scale(1)",
+                              boxShadow: moveModePulse && isSelected ? "0 0 0 3px rgba(15, 107, 95, 0.18)" : "none",
+                              transition: "transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
+                              minWidth: 150,
+                            }}
+                          >
+                            <Stack gap={2}>
+                              <Text size="xs" fw={700}>{`Q${index + 1}`}</Text>
+                              <Text size="xs" lineClamp={2}>{question.text || t("creator.questions.untitledQuestion")}</Text>
+                              <Badge size="xs" color={isValid ? "teal" : "orange"} variant="light">
+                                {isValid ? t("creator.questions.reorderReady") : t("creator.questions.reorderNeedsSetup")}
+                              </Badge>
+                            </Stack>
+                          </Paper>
+                        );
+                      })}
+                    </Group>
+
+                    {moveMode ? (
+                      <Group>
+                        <Button
+                          variant="light"
+                          onClick={moveSelectedQuestionLeft}
+                          disabled={!hasPreviousQuestion}
+                          leftSection={<IconChevronLeft size={16} />}
+                        >
+                          {t("creator.questions.reorderMoveLeft")}
+                        </Button>
+                        <Button
+                          variant="light"
+                          onClick={moveSelectedQuestionRight}
+                          disabled={!hasNextQuestion}
+                          rightSection={<IconChevronRight size={16} />}
+                        >
+                          {t("creator.questions.reorderMoveRight")}
+                        </Button>
+                        <Button variant="default" onClick={() => setMoveMode(false)}>{t("creator.questions.reorderDone")}</Button>
+                      </Group>
+                    ) : null}
+                  </Stack>
+                </Card>
+
                 <Stack gap="sm">
                   <Text size="sm" fw={500}>{t("creator.questions.labelType")}</Text>
                   <SegmentedControl
@@ -782,42 +1232,75 @@ export function CreateQuizPage(): JSX.Element {
                 {currentQuestion.questionType === "multiple_choice" ? (
                   <Stack gap="sm">
                     <Text size="sm" fw={500}>{t("creator.questions.labelCorrect")}</Text>
-                    <SegmentedControl
-                      fullWidth
-                      data={currentQuestion.choices.map((_, index) => ({
-                        value: String(index),
-                        label: String.fromCharCode(65 + index),
-                      }))}
-                      value={String(currentQuestion.correctIndex ?? 0)}
-                      onChange={(value) =>
-                        updateCurrentQuestion({
-                          ...currentQuestion,
-                          correctIndex: Number(value ?? "0"),
-                        })
-                      }
-                    />
                     {currentQuestion.choices.map((choice, index) => (
-                      <Group key={`choice-${index}`} align="end">
+                      <Group key={`choice-${index}`} align="end" wrap="nowrap">
+                        <Checkbox
+                          checked={currentQuestion.correctChoiceIndexes.includes(index)}
+                          onChange={(event) => toggleCorrectChoice(index, event.currentTarget.checked)}
+                          aria-label={`Mark response ${String.fromCharCode(65 + index)} as correct`}
+                        />
                         <TextInput
                           style={{ flex: 1 }}
                           label={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + index) })}
                           value={choice}
                           onChange={(e) => updateChoice(index, e.currentTarget.value)}
+                          onBlur={() => handleChoiceBlur(index)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
+                            if ((choice ?? "").trim().length === 0) return;
+                            setChoiceDraftVisible(true);
+                            requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
+                          }}
                         />
                         <Button
                           variant="light"
                           color="red"
                           onClick={() => removeChoice(index)}
-                          disabled={currentQuestion.choices.length <= 2}
+                          leftSection={<IconTrash size={16} />}
                         >
                           {t("creator.questions.removeChoice")}
                         </Button>
                       </Group>
                     ))}
-                    <Group>
-                      <Button variant="light" onClick={addChoice}>{t("creator.questions.addChoice")}</Button>
-                      <Badge>{t("creator.questions.choiceCount", { count: currentQuestion.choices.length })}</Badge>
-                    </Group>
+                    {choiceDraftVisible ? (
+                      <Group align="end" wrap="nowrap">
+                        <Checkbox
+                          checked={choiceDraftIsCorrect}
+                          onChange={(event) => setChoiceDraftIsCorrect(event.currentTarget.checked)}
+                          aria-label="Mark new response as correct"
+                        />
+                        <TextInput
+                          ref={choiceDraftInputRef}
+                          style={{ flex: 1 }}
+                          label={t("creator.questions.addChoice")}
+                          placeholder={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + currentQuestion.choices.length) })}
+                          value={choiceDraft}
+                          onChange={(event) => setChoiceDraft(event.currentTarget.value)}
+                          onBlur={() => {
+                            if (choiceDraft.trim().length > 0) return;
+                            setChoiceDraftVisible(false);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
+                            event.preventDefault();
+                            appendChoiceFromDraft();
+                          }}
+                        />
+                        <Button variant="light" onClick={appendChoiceFromDraft} leftSection={<IconPlus size={16} />}>
+                          {t("creator.questions.addChoice")}
+                        </Button>
+                      </Group>
+                    ) : (
+                      <Group>
+                        <Button variant="light" onClick={() => {
+                          setChoiceDraftVisible(true);
+                          requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
+                        }} leftSection={<IconPlus size={16} />}>
+                          {t("creator.questions.addChoice")}
+                        </Button>
+                      </Group>
+                    )}
+                    <Badge>{t("creator.questions.choiceCount", { count: currentQuestion.choices.length })}</Badge>
                   </Stack>
                 ) : null}
 

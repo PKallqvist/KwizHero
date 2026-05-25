@@ -8,10 +8,10 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   NumberInput,
   Paper,
-  Radio,
   Select,
   Stack,
   Text,
@@ -128,7 +128,7 @@ export function PlayQuizPage(): JSX.Element {
   const [cardPhase, setCardPhase] = useState<QuestionCardPhase>("back");
   const [preRevealCountdown, setPreRevealCountdown] = useState<number | null>(null);
 
-  const [selectedChoiceId, setSelectedChoiceId] = useState<string>("");
+  const [selectedChoiceIds, setSelectedChoiceIds] = useState<string[]>([]);
   const [numericAnswer, setNumericAnswer] = useState<number | null>(null);
   const [letterOrderAnswer, setLetterOrderAnswer] = useState("");
 
@@ -293,7 +293,7 @@ export function PlayQuizPage(): JSX.Element {
     setWaypointUnlocked(false);
     setAnswerResult(null);
     setSessionComplete(false);
-    setSelectedChoiceId("");
+    setSelectedChoiceIds([]);
     setNumericAnswer(null);
     setLetterOrderAnswer("");
     setQuestionTimedOut(false);
@@ -385,7 +385,7 @@ export function PlayQuizPage(): JSX.Element {
 
     setError(null);
     setQuestionTimedOut(false);
-    setSelectedChoiceId("");
+    setSelectedChoiceIds([]);
     setNumericAnswer(null);
     setLetterOrderAnswer("");
 
@@ -408,7 +408,7 @@ export function PlayQuizPage(): JSX.Element {
     }
 
     const questionType = playable.question.questionType ?? "multiple_choice";
-    if (questionType === "multiple_choice" && !selectedChoiceId) {
+    if (questionType === "multiple_choice" && selectedChoiceIds.length === 0) {
       setError(t("player.errorSelectAnswer"));
       return;
     }
@@ -429,7 +429,7 @@ export function PlayQuizPage(): JSX.Element {
         sessionId,
         waypointId: playable.waypoint.id,
         questionId: playable.question.id,
-        selectedChoiceId: questionType === "multiple_choice" ? selectedChoiceId : "",
+        selectedChoiceIds: questionType === "multiple_choice" ? selectedChoiceIds : [],
         numericAnswer: questionType === "numeric" ? numericAnswer : null,
         letterOrderAnswer: questionType === "letter_order" ? letterOrderAnswer : null,
         elapsedMs,
@@ -466,13 +466,13 @@ export function PlayQuizPage(): JSX.Element {
     }
 
     return (
-      <Radio.Group value={selectedChoiceId} onChange={setSelectedChoiceId}>
+      <Checkbox.Group value={selectedChoiceIds} onChange={setSelectedChoiceIds}>
         <Stack gap="xs">
           {playable.question.choices.map((choice) => (
-            <Radio key={choice.id} value={choice.id} label={choice.text} />
+            <Checkbox key={choice.id} value={choice.id} label={choice.text} />
           ))}
         </Stack>
-      </Radio.Group>
+      </Checkbox.Group>
     );
   }
 

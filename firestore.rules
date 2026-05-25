@@ -59,7 +59,7 @@ service cloud.firestore {
         allow create: if request.auth != null
           && request.auth.uid == get(/databases/$(database)/documents/participantSessions/$(sessionId)).data.anonymousUid
           && request.resource.data.keys().hasAll([
-            'questionId', 'waypointId', 'selectedChoiceId', 'isCorrect', 'pointsAwarded', 'answeredAt', 'elapsedMs'
+            'questionId', 'waypointId', 'selectedChoiceId', 'selectedChoiceIds', 'isCorrect', 'pointsAwarded', 'answeredAt', 'elapsedMs'
           ]);
       }
     }
