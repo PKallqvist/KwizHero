@@ -13,10 +13,16 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
+import { signInAnonymously } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
-import { db } from "./firebase";
-import { functions } from "./firebase";
+import { auth, db, functions } from "./firebase";
 import type { AnswerResult, FirstPlayable, QuizDraftInput, QuizSummary } from "../../domain/types";
+
+async function getAnonymousUid(): Promise<string> {
+  if (auth.currentUser) return auth.currentUser.uid;
+  const credential = await signInAnonymously(auth);
+  return credential.user.uid;
+}
 
 export interface CreatedQuiz {
   quizId: string;
@@ -112,7 +118,12 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     description: string;
     status: "draft" | "published";
   };
-  const r = rulesDoc.data() as { openAt: string; closeAt: string };
+  const r = rulesDoc.data() as {
+    openAt: string;
+    closeAt: string;
+    revealMode: "instant" | "on_completion" | "scheduled";
+    revealAt: string | null;
+  };
 
   return {
     id: quizId,
@@ -121,13 +132,17 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     status: q.status,
     openAt: r.openAt,
     closeAt: r.closeAt,
+    revealMode: r.revealMode ?? "instant",
+    revealAt: r.revealAt ?? null,
   };
 }
 
 export async function startSession(quizId: string, nickname: string): Promise<string> {
+  const anonymousUid = await getAnonymousUid();
   const sessionRef = await addDoc(collection(db, "participantSessions"), {
     quizId,
     nickname,
+    anonymousUid,
     startedAt: serverTimestamp(),
     status: "active",
     score: 0,

@@ -8,6 +8,7 @@
 ## 2. Runtime Components
 - PWA Frontend (React + TypeScript).
 - Firebase Firestore (data persistence).
+- Firebase Anonymous Auth (participant session identity — automatic sign-in, no account required).
 - Firebase Cloud Functions (trusted server-side rules/transitions).
 - Leaflet + OpenStreetMap (map and route authoring/playback).
 
@@ -21,12 +22,15 @@
   - metadata, publish status, visibility
 - Ruleset Engine
   - timing windows, reveal modes, scoring strategy selection
+  - `domain/reveal.ts` — `resolveRevealPhase()` determines what participants see after answering (full / score_only / hidden)
 - Route/Waypoint Engine
   - waypoint ordering and geofence checks
+  - `platform/map/geolocation.ts` — Haversine distance, browser geolocation adapter
 - Question Engine
   - multiple-choice structure and validation
 - Player Session
-  - nickname, progress, submissions, score snapshot
+  - nickname, anonymousUid, progress, submissions, score snapshot
+  - Session writes are auth-scoped via Firebase Anonymous Auth + Firestore rules
 
 ## 5. Data Access Pattern
 - UI -> use-case/service -> repository -> Firestore
@@ -35,8 +39,9 @@
 
 ## 6. Security Model (MVP)
 - No creator accounts in MVP.
-- Creator edit-key required for mutable creator operations.
-- Firestore rules restrict writes by path and operation type.
+- Creator edit-key (SHA-256 hashed, stored in `quizSecrets`) required for publish transitions — validated server-side by Cloud Function.
+- Participants sign in with Firebase Anonymous Auth automatically; no account required.
+- Firestore rules restrict session/answer writes to the owning `anonymousUid`.
 - Cloud Functions gate publish action and state transitions.
 
 ## 7. Scalability Notes

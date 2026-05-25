@@ -5,7 +5,7 @@ import { I18nextProvider } from "react-i18next";
 import { MantineProvider } from "@mantine/core";
 import { App } from "./App";
 import { i18n } from "./platform/i18n/i18n";
-import { kwizTheme } from "./theme/kwizTheme";
+import { kwizTheme } from "./platform/theme/kwizTheme";
 import { registerSW } from "virtual:pwa-register";
 import "@mantine/core/styles.css";
 import "leaflet/dist/leaflet.css";

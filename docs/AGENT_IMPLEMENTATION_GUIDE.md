@@ -12,10 +12,11 @@ This guide defines how engineering agents and contributors should implement Kwiz
 
 ## 3. Target Stack (MVP)
 - Frontend: React + TypeScript PWA.
-- UI system: Mantine (or equivalent component library with theme tokens).
-- Backend: Firebase (Firestore + Cloud Functions).
+- UI system: Mantine (CSS variable tokens, dark/light mode, accessible components).
+- Backend: Firebase (Firestore + Cloud Functions + Anonymous Auth).
 - Map: Leaflet + OpenStreetMap.
-- i18n: i18next + react-i18next.
+- i18n: i18next + react-i18next (namespaced keys: nav.*, common.*, creator.*, player.*).
+- Testing: Vitest (`npm test` / `npm run test:watch`).
 
 ## 4. Module Boundaries
 Use feature-sliced domains with shared platform services.

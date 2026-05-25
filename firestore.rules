@@ -41,16 +41,26 @@ service cloud.firestore {
 
     match /participantSessions/{sessionId} {
       allow read: if true;
-      allow create: if request.resource.data.keys().hasAll([
-        'quizId', 'nickname', 'startedAt', 'status', 'score', 'currentWaypointOrder'
-      ]) && validNickname(request.resource.data.nickname);
-      allow update: if true;
+
+      allow create: if request.auth != null
+        && request.resource.data.anonymousUid == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'quizId', 'nickname', 'anonymousUid', 'startedAt', 'status', 'score', 'currentWaypointOrder'
+        ])
+        && validNickname(request.resource.data.nickname);
+
+      // Only the session owner may update (score, status, completedAt)
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.anonymousUid;
 
       match /answers/{answerId} {
         allow read: if true;
-        allow create: if request.resource.data.keys().hasAll([
-          'questionId', 'waypointId', 'selectedChoiceId', 'isCorrect', 'pointsAwarded', 'answeredAt', 'elapsedMs'
-        ]);
+
+        allow create: if request.auth != null
+          && request.auth.uid == get(/databases/$(database)/documents/participantSessions/$(sessionId)).data.anonymousUid
+          && request.resource.data.keys().hasAll([
+            'questionId', 'waypointId', 'selectedChoiceId', 'isCorrect', 'pointsAwarded', 'answeredAt', 'elapsedMs'
+          ]);
       }
     }
   }

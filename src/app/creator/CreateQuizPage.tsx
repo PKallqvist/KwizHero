@@ -116,11 +116,8 @@ export function CreateQuizPage(): JSX.Element {
   const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
 
   const shareLink = useMemo(() => {
-    if (!result) {
-      return "";
-    }
-    const base = window.location.origin;
-    return `${base}/play/${result.quizId}`;
+    if (!result) return "";
+    return `${window.location.origin}/play/${result.quizId}`;
   }, [result]);
 
   useEffect(() => {
@@ -132,7 +129,6 @@ export function CreateQuizPage(): JSX.Element {
       const dataUrl = await QRCode.toDataURL(shareLink, { width: 280, margin: 1 });
       setQrDataUrl(dataUrl);
     }
-
     buildQr().catch(() => setQrDataUrl(""));
   }, [shareLink]);
 
@@ -145,9 +141,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function updateCurrentQuestion(next: DraftQuestionInput): void {
-    if (!currentWaypoint) {
-      return;
-    }
+    if (!currentWaypoint) return;
     const nextQuestions = [...currentWaypoint.questions];
     nextQuestions[selectedQuestionIndex] = next;
     updateCurrentWaypoint({ ...currentWaypoint, questions: nextQuestions });
@@ -163,9 +157,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function removeCurrentWaypoint(): void {
-    if (input.waypoints.length <= 1) {
-      return;
-    }
+    if (input.waypoints.length <= 1) return;
     const nextWaypoints = input.waypoints.filter((_, i) => i !== selectedWaypointIndex);
     setInput((prev) => ({ ...prev, waypoints: nextWaypoints }));
     setSelectedWaypointIndex(Math.max(0, selectedWaypointIndex - 1));
@@ -173,9 +165,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function addQuestionToCurrentWaypoint(): void {
-    if (!currentWaypoint) {
-      return;
-    }
+    if (!currentWaypoint) return;
     updateCurrentWaypoint({
       ...currentWaypoint,
       questions: [...currentWaypoint.questions, createDefaultQuestion()],
@@ -184,9 +174,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function removeCurrentQuestion(): void {
-    if (!currentWaypoint || currentWaypoint.questions.length <= 1) {
-      return;
-    }
+    if (!currentWaypoint || currentWaypoint.questions.length <= 1) return;
     const nextQuestions = currentWaypoint.questions.filter((_, i) => i !== selectedQuestionIndex);
     updateCurrentWaypoint({ ...currentWaypoint, questions: nextQuestions });
     setSelectedQuestionIndex(Math.max(0, selectedQuestionIndex - 1));
@@ -203,9 +191,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   async function onPublish(): Promise<void> {
-    if (!result) {
-      return;
-    }
+    if (!result) return;
     setPublishing(true);
     setError(null);
     try {
@@ -225,7 +211,8 @@ export function CreateQuizPage(): JSX.Element {
     setStep((prev) => (prev > 1 ? ((prev - 1) as WizardStep) : prev));
   }
 
-  const hasWaypointData = input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
+  const hasWaypointData =
+    input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
   const hasQuestionData = input.waypoints.every(
     (w) =>
       w.questions.length > 0 &&
@@ -242,22 +229,26 @@ export function CreateQuizPage(): JSX.Element {
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
       <Stack gap="md">
-        <Title order={2}>{t("creatorTitle")}</Title>
-        <Text c="dimmed">Wizard step {step}/5</Text>
+        <Title order={2}>{t("creator.title")}</Title>
+        <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}</Text>
 
         <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
-          <Stepper.Step label="Identity" />
-          <Stepper.Step label="Rules" />
-          <Stepper.Step label="Route" />
-          <Stepper.Step label="Questions" />
-          <Stepper.Step label="Publish" />
+          <Stepper.Step label={t("creator.steps.identity")} />
+          <Stepper.Step label={t("creator.steps.rules")} />
+          <Stepper.Step label={t("creator.steps.route")} />
+          <Stepper.Step label={t("creator.steps.questions")} />
+          <Stepper.Step label={t("creator.steps.publish")} />
         </Stepper>
 
         {step === 1 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-            <TextInput label="Title" value={input.title} onChange={(e) => setInput({ ...input, title: e.currentTarget.value })} />
+            <TextInput
+              label={t("creator.identity.labelTitle")}
+              value={input.title}
+              onChange={(e) => setInput({ ...input, title: e.currentTarget.value })}
+            />
             <Select
-              label="Locale"
+              label={t("creator.identity.labelLocale")}
               data={[
                 { value: "sv", label: "Svenska" },
                 { value: "en", label: "English" },
@@ -270,7 +261,7 @@ export function CreateQuizPage(): JSX.Element {
               }}
             />
             <Textarea
-              label="Description"
+              label={t("creator.identity.labelDescription")}
               minRows={3}
               value={input.description}
               onChange={(e) => setInput({ ...input, description: e.currentTarget.value })}
@@ -281,7 +272,7 @@ export function CreateQuizPage(): JSX.Element {
         {step === 2 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
             <TextInput
-              label="Open at"
+              label={t("creator.rules.labelOpenAt")}
               type="datetime-local"
               value={new Date(input.ruleset.openAt).toISOString().slice(0, 16)}
               onChange={(e) =>
@@ -289,7 +280,7 @@ export function CreateQuizPage(): JSX.Element {
               }
             />
             <TextInput
-              label="Close at"
+              label={t("creator.rules.labelCloseAt")}
               type="datetime-local"
               value={new Date(input.ruleset.closeAt).toISOString().slice(0, 16)}
               onChange={(e) =>
@@ -297,7 +288,7 @@ export function CreateQuizPage(): JSX.Element {
               }
             />
             <NumberInput
-              label="Question timer (seconds)"
+              label={t("creator.rules.labelQuestionTimer")}
               min={5}
               max={300}
               value={input.ruleset.questionTimeLimitSeconds}
@@ -309,11 +300,11 @@ export function CreateQuizPage(): JSX.Element {
               }
             />
             <Select
-              label="Reveal mode"
+              label={t("creator.rules.labelRevealMode")}
               data={[
-                { value: "instant", label: "Instant" },
-                { value: "on_completion", label: "On completion" },
-                { value: "scheduled", label: "Scheduled" },
+                { value: "instant", label: t("creator.rules.revealInstant") },
+                { value: "on_completion", label: t("creator.rules.revealOnCompletion") },
+                { value: "scheduled", label: t("creator.rules.revealScheduled") },
               ]}
               value={input.ruleset.revealMode}
               onChange={(value) =>
@@ -327,7 +318,7 @@ export function CreateQuizPage(): JSX.Element {
               }
             />
             <NumberInput
-              label="Waypoint radius (meters)"
+              label={t("creator.rules.labelWaypointRadius")}
               min={10}
               max={200}
               value={input.ruleset.waypointGateRadiusMeters}
@@ -345,7 +336,7 @@ export function CreateQuizPage(): JSX.Element {
           <Stack gap="md">
             <Group>
               <Select
-                label="Waypoint"
+                label={t("creator.route.labelWaypoint")}
                 style={{ minWidth: 260 }}
                 data={input.waypoints.map((w, i) => ({ value: String(i), label: `${i + 1}. ${w.name}` }))}
                 value={String(selectedWaypointIndex)}
@@ -355,38 +346,49 @@ export function CreateQuizPage(): JSX.Element {
                   setSelectedQuestionIndex(0);
                 }}
               />
-              <Button variant="light" onClick={addWaypoint}>Add waypoint</Button>
-              <Button variant="light" color="red" onClick={removeCurrentWaypoint} disabled={input.waypoints.length <= 1}>
-                Remove waypoint
+              <Button variant="light" onClick={addWaypoint}>
+                {t("creator.route.addWaypoint")}
               </Button>
-              <Badge>{input.waypoints.length} total</Badge>
+              <Button
+                variant="light"
+                color="red"
+                onClick={removeCurrentWaypoint}
+                disabled={input.waypoints.length <= 1}
+              >
+                {t("creator.route.removeWaypoint")}
+              </Button>
+              <Badge>{t("creator.route.waypointCount", { count: input.waypoints.length })}</Badge>
             </Group>
 
             {currentWaypoint ? (
               <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
                 <TextInput
-                  label="Waypoint name"
+                  label={t("creator.route.labelName")}
                   value={currentWaypoint.name}
                   onChange={(e) => updateCurrentWaypoint({ ...currentWaypoint, name: e.currentTarget.value })}
                 />
                 <NumberInput
-                  label="Latitude"
+                  label={t("creator.route.labelLat")}
                   decimalScale={6}
                   value={currentWaypoint.lat}
-                  onChange={(value) => updateCurrentWaypoint({ ...currentWaypoint, lat: Number(value) || currentWaypoint.lat })}
+                  onChange={(value) =>
+                    updateCurrentWaypoint({ ...currentWaypoint, lat: Number(value) || currentWaypoint.lat })
+                  }
                 />
                 <NumberInput
-                  label="Longitude"
+                  label={t("creator.route.labelLng")}
                   decimalScale={6}
                   value={currentWaypoint.lng}
-                  onChange={(value) => updateCurrentWaypoint({ ...currentWaypoint, lng: Number(value) || currentWaypoint.lng })}
+                  onChange={(value) =>
+                    updateCurrentWaypoint({ ...currentWaypoint, lng: Number(value) || currentWaypoint.lng })
+                  }
                 />
               </SimpleGrid>
             ) : null}
 
             {currentWaypoint ? (
               <>
-                <Text c="dimmed">Click on the map to place the selected waypoint.</Text>
+                <Text c="dimmed">{t("creator.route.mapHint")}</Text>
                 <WaypointPicker
                   lat={currentWaypoint.lat}
                   lng={currentWaypoint.lng}
@@ -403,7 +405,7 @@ export function CreateQuizPage(): JSX.Element {
             {currentWaypoint ? (
               <Group>
                 <Select
-                  label="Question"
+                  label={t("creator.questions.labelQuestion")}
                   style={{ minWidth: 260 }}
                   data={currentWaypoint.questions.map((q, i) => ({
                     value: String(i),
@@ -412,28 +414,32 @@ export function CreateQuizPage(): JSX.Element {
                   value={String(selectedQuestionIndex)}
                   onChange={(value) => setSelectedQuestionIndex(Number(value ?? "0"))}
                 />
-                <Button variant="light" onClick={addQuestionToCurrentWaypoint}>Add question</Button>
+                <Button variant="light" onClick={addQuestionToCurrentWaypoint}>
+                  {t("creator.questions.addQuestion")}
+                </Button>
                 <Button
                   variant="light"
                   color="red"
                   onClick={removeCurrentQuestion}
                   disabled={currentWaypoint.questions.length <= 1}
                 >
-                  Remove question
+                  {t("creator.questions.removeQuestion")}
                 </Button>
-                <Badge>{currentWaypoint.questions.length} in waypoint</Badge>
+                <Badge>
+                  {t("creator.questions.questionCount", { count: currentWaypoint.questions.length })}
+                </Badge>
               </Group>
             ) : null}
 
             {currentQuestion ? (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 <TextInput
-                  label="Question"
+                  label={t("creator.questions.labelText")}
                   value={currentQuestion.text}
                   onChange={(e) => updateCurrentQuestion({ ...currentQuestion, text: e.currentTarget.value })}
                 />
                 <Select
-                  label="Correct option"
+                  label={t("creator.questions.labelCorrect")}
                   data={[
                     { value: "0", label: "A" },
                     { value: "1", label: "B" },
@@ -441,10 +447,12 @@ export function CreateQuizPage(): JSX.Element {
                     { value: "3", label: "D" },
                   ]}
                   value={String(currentQuestion.correctIndex)}
-                  onChange={(value) => updateCurrentQuestion({ ...currentQuestion, correctIndex: Number(value ?? "0") })}
+                  onChange={(value) =>
+                    updateCurrentQuestion({ ...currentQuestion, correctIndex: Number(value ?? "0") })
+                  }
                 />
                 <TextInput
-                  label="Choice A"
+                  label={t("creator.questions.choiceA")}
                   value={currentQuestion.choices[0]}
                   onChange={(e) =>
                     updateCurrentQuestion({
@@ -454,7 +462,7 @@ export function CreateQuizPage(): JSX.Element {
                   }
                 />
                 <TextInput
-                  label="Choice B"
+                  label={t("creator.questions.choiceB")}
                   value={currentQuestion.choices[1]}
                   onChange={(e) =>
                     updateCurrentQuestion({
@@ -464,7 +472,7 @@ export function CreateQuizPage(): JSX.Element {
                   }
                 />
                 <TextInput
-                  label="Choice C"
+                  label={t("creator.questions.choiceC")}
                   value={currentQuestion.choices[2]}
                   onChange={(e) =>
                     updateCurrentQuestion({
@@ -474,7 +482,7 @@ export function CreateQuizPage(): JSX.Element {
                   }
                 />
                 <TextInput
-                  label="Choice D"
+                  label={t("creator.questions.choiceD")}
                   value={currentQuestion.choices[3]}
                   onChange={(e) =>
                     updateCurrentQuestion({
@@ -491,38 +499,48 @@ export function CreateQuizPage(): JSX.Element {
         {step === 5 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
             <Card withBorder radius="md">
-              <Title order={4}>Review</Title>
+              <Title order={4}>{t("creator.publish.reviewHeading")}</Title>
               <List mt="sm" spacing="xs">
-                <List.Item>{input.title}</List.Item>
-                <List.Item>{input.description}</List.Item>
-                <List.Item>Locale: {input.locale}</List.Item>
-                <List.Item>Waypoints: {input.waypoints.length}</List.Item>
-                <List.Item>Questions: {input.waypoints.reduce((sum, w) => sum + w.questions.length, 0)}</List.Item>
-                <List.Item>Question timer: {input.ruleset.questionTimeLimitSeconds}s</List.Item>
-                <List.Item>Reveal mode: {input.ruleset.revealMode}</List.Item>
+                <List.Item>{t("creator.publish.reviewTitle", { title: input.title })}</List.Item>
+                <List.Item>{t("creator.publish.reviewLocale", { locale: input.locale.toUpperCase() })}</List.Item>
+                <List.Item>{t("creator.publish.reviewWaypoints", { count: input.waypoints.length })}</List.Item>
+                <List.Item>
+                  {t("creator.publish.reviewQuestions", {
+                    count: input.waypoints.reduce((sum, w) => sum + w.questions.length, 0),
+                  })}
+                </List.Item>
+                <List.Item>
+                  {t("creator.publish.reviewTimer", { seconds: input.ruleset.questionTimeLimitSeconds })}
+                </List.Item>
+                <List.Item>
+                  {t("creator.publish.reviewRevealMode", { mode: input.ruleset.revealMode })}
+                </List.Item>
               </List>
             </Card>
             <Card withBorder radius="md">
               <Stack gap="sm">
-                <Title order={4}>Publish</Title>
+                <Title order={4}>{t("creator.publish.publishHeading")}</Title>
                 <Group>
-                  <Button onClick={onCreate}>Create draft</Button>
+                  <Button onClick={onCreate}>{t("creator.publish.createDraft")}</Button>
                   <Button variant="light" onClick={onPublish} disabled={!result} loading={publishing}>
-                    {t("publish")}
+                    {t("creator.publish.publish")}
                   </Button>
                 </Group>
                 {result ? (
                   <Alert icon={<IconCircleCheck size={16} />} color="teal" variant="light">
-                    <Text size="sm">Quiz ID: {result.quizId}</Text>
-                    <Text size="sm">Edit key: {result.editKey}</Text>
-                    <Text size="sm">{t("shareLink")}: {shareLink}</Text>
+                    <Stack gap={4}>
+                      <Text size="sm" fw={600}>{t("creator.publish.editKeyWarning")}</Text>
+                      <Text size="sm">{t("creator.publish.labelQuizId")}: {result.quizId}</Text>
+                      <Text size="sm">{t("creator.publish.labelEditKey")}: {result.editKey}</Text>
+                      <Text size="sm">{t("creator.publish.shareLink")}: {shareLink}</Text>
+                    </Stack>
                   </Alert>
                 ) : null}
                 {qrDataUrl ? (
                   <Card withBorder radius="md" p="sm">
                     <Group gap="xs" mb="xs">
                       <IconQrcode size={16} />
-                      <Text size="sm" fw={600}>QR Code</Text>
+                      <Text size="sm" fw={600}>{t("creator.publish.labelQrCode")}</Text>
                     </Group>
                     <Image src={qrDataUrl} alt="Quiz share QR code" radius="sm" fit="contain" h={220} />
                   </Card>
@@ -533,8 +551,12 @@ export function CreateQuizPage(): JSX.Element {
         ) : null}
 
         <Group justify="space-between">
-          <Button variant="default" onClick={previousStep} disabled={step === 1}>Back</Button>
-          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>Next</Button>
+          <Button variant="default" onClick={previousStep} disabled={step === 1}>
+            {t("common.back")}
+          </Button>
+          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
+            {t("common.next")}
+          </Button>
         </Group>
 
         {error ? (

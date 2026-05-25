@@ -38,10 +38,10 @@ export function App(): JSX.Element {
             <Group>
               <Title order={3}>KwizHero</Title>
               <Anchor component={Link} to="/create">
-                {t("navCreator")}
+                {t("nav.creator")}
               </Anchor>
               <Anchor component={Link} to="/play/demo">
-                {t("navPlay")}
+                {t("nav.play")}
               </Anchor>
             </Group>
             <Group>

@@ -38,6 +38,8 @@ export interface QuizSummary {
   status: "draft" | "published";
   openAt: string;
   closeAt: string;
+  revealMode: RevealMode;
+  revealAt: string | null;
 }
 
 export interface Waypoint {

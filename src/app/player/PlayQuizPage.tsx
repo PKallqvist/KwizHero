@@ -13,7 +13,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { IconAlertCircle, IconMapPin, IconTrophy } from "@tabler/icons-react";
+import { IconAlertCircle, IconClock, IconMapPin, IconTrophy } from "@tabler/icons-react";
 import {
   getFirstPlayable,
   getQuizSummary,
@@ -21,19 +21,21 @@ import {
   submitFirstAnswer,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, getCurrentCoordinates } from "../../platform/map/geolocation";
-import type { AnswerResult, FirstPlayable } from "../../domain/types";
+import { resolveRevealPhase } from "../../domain/reveal";
+import type { AnswerResult, FirstPlayable, QuizSummary } from "../../domain/types";
 
 export function PlayQuizPage(): JSX.Element {
   const { t } = useTranslation();
   const { quizId = "" } = useParams();
   const [nickname, setNickname] = useState("");
-  const [summary, setSummary] = useState<Awaited<ReturnType<typeof getQuizSummary>>>(null);
+  const [summary, setSummary] = useState<QuizSummary | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [playable, setPlayable] = useState<FirstPlayable | null>(null);
   const [distanceToWaypoint, setDistanceToWaypoint] = useState<number | null>(null);
   const [waypointUnlocked, setWaypointUnlocked] = useState(false);
   const [selectedChoiceId, setSelectedChoiceId] = useState<string>("");
   const [answerResult, setAnswerResult] = useState<AnswerResult | null>(null);
+  const [sessionComplete, setSessionComplete] = useState(false);
   const [questionStartMs, setQuestionStartMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,7 +47,7 @@ export function PlayQuizPage(): JSX.Element {
       const q = await getQuizSummary(quizId);
       setSummary(q);
       if (!q) {
-        setError(t("noQuiz"));
+        setError(t("player.noQuiz"));
       }
     } catch (e) {
       setError((e as Error).message);
@@ -56,11 +58,11 @@ export function PlayQuizPage(): JSX.Element {
 
   async function joinQuiz(): Promise<void> {
     if (!summary) {
-      setError("Load quiz first");
+      setError(t("player.errorLoadFirst"));
       return;
     }
     if (!nickname.trim()) {
-      setError("Nickname required");
+      setError(t("player.errorNicknameRequired"));
       return;
     }
 
@@ -68,29 +70,28 @@ export function PlayQuizPage(): JSX.Element {
     const closeAt = new Date(summary.closeAt).getTime();
     const now = Date.now();
     if (now < openAt) {
-      setError("Quiz not open yet");
+      setError(t("player.errorQuizNotOpen"));
       return;
     }
     if (now > closeAt) {
-      setError("Quiz is closed");
+      setError(t("player.errorQuizClosed"));
       return;
     }
 
+    setError(null);
     const sid = await startSession(quizId, nickname.trim());
     setSessionId(sid);
 
     const firstPlayable = await getFirstPlayable(quizId);
     if (!firstPlayable) {
-      setError("No waypoint/question found");
+      setError(t("player.errorNoPlayable"));
       return;
     }
     setPlayable(firstPlayable);
   }
 
   async function unlockWaypoint(): Promise<void> {
-    if (!playable) {
-      return;
-    }
+    if (!playable) return;
     setError(null);
     try {
       const current = await getCurrentCoordinates();
@@ -104,7 +105,10 @@ export function PlayQuizPage(): JSX.Element {
         setQuestionStartMs(Date.now());
       } else {
         setError(
-          `You are ${Math.round(distance)}m away. Move within ${playable.waypoint.gateRadiusMeters}m to unlock.`
+          t("player.tooFarError", {
+            actual: Math.round(distance),
+            required: playable.waypoint.gateRadiusMeters,
+          })
         );
       }
     } catch (e) {
@@ -114,10 +118,11 @@ export function PlayQuizPage(): JSX.Element {
 
   async function submitAnswer(): Promise<void> {
     if (!sessionId || !playable || !selectedChoiceId) {
-      setError("Select an answer first");
+      setError(t("player.errorSelectAnswer"));
       return;
     }
     const elapsedMs = questionStartMs ? Date.now() - questionStartMs : 0;
+    setError(null);
     try {
       const result = await submitFirstAnswer({
         quizId,
@@ -128,19 +133,60 @@ export function PlayQuizPage(): JSX.Element {
         elapsedMs,
       });
       setAnswerResult(result);
+      setSessionComplete(true);
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
+  function renderAnswerFeedback(): JSX.Element | null {
+    if (!answerResult || !summary) return null;
+
+    const phase = resolveRevealPhase(summary.revealMode, sessionComplete, summary.revealAt);
+
+    if (phase === "full") {
+      return (
+        <Alert
+          icon={<IconTrophy size={16} />}
+          color={answerResult.isCorrect ? "teal" : "orange"}
+          variant="light"
+        >
+          {answerResult.isCorrect ? t("player.resultCorrect") : t("player.resultIncorrect")}
+          {". "}
+          {t("player.resultPoints", {
+            points: answerResult.pointsAwarded,
+            score: answerResult.score,
+          })}
+        </Alert>
+      );
+    }
+
+    if (phase === "score_only") {
+      return (
+        <Alert icon={<IconTrophy size={16} />} color="teal" variant="light">
+          {t("player.resultSubmitted", { score: answerResult.score })}
+        </Alert>
+      );
+    }
+
+    // hidden — scheduled reveal not yet reached
+    const revealDate = summary.revealAt ? new Date(summary.revealAt).toLocaleString() : "";
+    return (
+      <Alert icon={<IconClock size={16} />} color="blue" variant="light">
+        {t("player.resultScheduled", { date: revealDate })}
+      </Alert>
+    );
+  }
+
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
       <Stack gap="md">
-        <Title order={2}>{t("joinTitle")}</Title>
-        <Text c="dimmed">Quiz ID: {quizId}</Text>
+        <Title order={2}>{t("player.joinTitle")}</Title>
 
         <Group>
-          <Button onClick={loadQuiz} loading={loading}>Load quiz</Button>
+          <Button onClick={loadQuiz} loading={loading}>
+            {t("player.loadQuiz")}
+          </Button>
         </Group>
 
         {summary ? (
@@ -149,43 +195,55 @@ export function PlayQuizPage(): JSX.Element {
               <Title order={3}>{summary.title}</Title>
               <Text>{summary.description}</Text>
               <Text c="dimmed" size="sm">
-                Open: {new Date(summary.openAt).toLocaleString()} | Close: {new Date(summary.closeAt).toLocaleString()}
+                {t("player.open")}: {new Date(summary.openAt).toLocaleString()} &nbsp;|&nbsp;
+                {t("player.close")}: {new Date(summary.closeAt).toLocaleString()}
               </Text>
               <TextInput
-                label={t("nickname")}
+                label={t("player.nickname")}
                 value={nickname}
                 onChange={(e) => setNickname(e.currentTarget.value)}
               />
               <Group>
-                <Button onClick={joinQuiz}>{t("start")}</Button>
+                <Button onClick={joinQuiz}>{t("player.start")}</Button>
               </Group>
             </Stack>
           </Card>
         ) : null}
-
-        {sessionId ? <Text size="sm">Session started: {sessionId}</Text> : null}
 
         {playable ? (
           <Card withBorder radius="md">
             <Stack gap="sm">
               <Group gap="xs">
                 <IconMapPin size={18} />
-                <Title order={4}>Waypoint: {playable.waypoint.title}</Title>
+                <Title order={4}>
+                  {t("player.waypointLabel", { title: playable.waypoint.title })}
+                </Title>
               </Group>
               <Text c="dimmed" size="sm">
-                Target: {playable.waypoint.lat.toFixed(5)}, {playable.waypoint.lng.toFixed(5)}
+                {t("player.waypointTarget", {
+                  lat: playable.waypoint.lat.toFixed(5),
+                  lng: playable.waypoint.lng.toFixed(5),
+                })}
               </Text>
               <Group>
-                <Button variant="light" onClick={unlockWaypoint} disabled={waypointUnlocked}>
-                  {waypointUnlocked ? "Waypoint unlocked" : "Check waypoint access"}
+                <Button
+                  variant="light"
+                  onClick={unlockWaypoint}
+                  disabled={waypointUnlocked}
+                >
+                  {waypointUnlocked
+                    ? t("player.waypointUnlocked")
+                    : t("player.checkWaypoint")}
                 </Button>
               </Group>
 
               {distanceToWaypoint !== null ? (
-                <Text c="dimmed" size="sm">Distance to waypoint: {Math.round(distanceToWaypoint)}m</Text>
+                <Text c="dimmed" size="sm">
+                  {t("player.distanceAway", { meters: Math.round(distanceToWaypoint) })}
+                </Text>
               ) : null}
 
-              {waypointUnlocked ? (
+              {waypointUnlocked && !answerResult ? (
                 <Stack gap="sm">
                   <Title order={5}>{playable.question.text}</Title>
                   <Radio.Group value={selectedChoiceId} onChange={setSelectedChoiceId}>
@@ -196,16 +254,12 @@ export function PlayQuizPage(): JSX.Element {
                     </Stack>
                   </Radio.Group>
                   <Group>
-                    <Button onClick={submitAnswer}>Submit answer</Button>
+                    <Button onClick={submitAnswer}>{t("player.submitAnswer")}</Button>
                   </Group>
                 </Stack>
               ) : null}
 
-              {answerResult ? (
-                <Alert icon={<IconTrophy size={16} />} color={answerResult.isCorrect ? "teal" : "orange"} variant="light">
-                  {answerResult.isCorrect ? "Correct" : "Incorrect"}. Points: {answerResult.pointsAwarded}. Total score: {answerResult.score}
-                </Alert>
-              ) : null}
+              {renderAnswerFeedback()}
             </Stack>
           </Card>
         ) : null}
