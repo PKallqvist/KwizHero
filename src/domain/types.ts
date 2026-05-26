@@ -14,6 +14,7 @@ export interface Ruleset {
   revealMode: RevealMode;
   revealAt: string | null;
   waypointGateRadiusMeters: number;
+  requireSequentialWaypoints: boolean;
   scoringStrategy: "binary_correct_1_point";
 }
 
@@ -53,6 +54,8 @@ export interface QuizSummary {
   interQuestionTimeLimitSeconds: number | null;
   revealMode: RevealMode;
   revealAt: string | null;
+  waypointGateRadiusMeters: number;
+  requireSequentialWaypoints: boolean;
 }
 
 export interface QuizWalkQuestion {

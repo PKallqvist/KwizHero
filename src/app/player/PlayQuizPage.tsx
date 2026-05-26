@@ -2,14 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { latLngBounds } from "leaflet";
-import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import {
+  Circle,
+  CircleMarker,
+  MapContainer,
+  Polyline,
+  TileLayer,
+  Tooltip as LeafletTooltip,
+  useMap,
+} from "react-leaflet";
+import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
   Card,
   Checkbox,
   Group,
+  Image,
   NumberInput,
   Paper,
   Select,
@@ -21,79 +31,135 @@ import {
 import {
   IconAlertCircle,
   IconClock,
-  IconMap2,
-  IconMapPin,
   IconPlayerSkipForward,
   IconPlayerTrackPrev,
   IconTrophy,
+  IconX,
 } from "@tabler/icons-react";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import {
   getQuizWalk,
-  getFirstPlayable,
   getQuizSummary,
   startSession,
   submitFirstAnswer,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, getCurrentCoordinates } from "../../platform/map/geolocation";
 import { resolveRevealPhase } from "../../domain/reveal";
-import type { AnswerResult, FirstPlayable, QuizSummary, QuizWalk } from "../../domain/types";
+import type { AnswerResult, QuizSummary, QuizWalk, QuizWalkQuestion, QuizWalkWaypoint } from "../../domain/types";
 import type { Coordinates } from "../../platform/map/geolocation";
 
 type QuestionCardPhase = "back" | "pre_countdown" | "front";
 
-interface TravelMapProps {
-  target: Coordinates;
+interface JourneyMapProps {
+  waypoints: QuizWalkWaypoint[];
+  targetWaypointIndex: number;
   current: Coordinates | null;
   radius: number;
-  targetLabel: string;
   currentLabel: string;
+  orderedRoute: boolean;
 }
 
-function FitTravelBounds(props: { target: Coordinates; current: Coordinates | null }): null {
+function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coordinates | null }): null {
   const map = useMap();
 
   useEffect(() => {
+    if (props.waypoints.length === 0) return;
+
+    const points: Array<[number, number]> = props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng]);
     if (props.current) {
-      const bounds = latLngBounds([
-        [props.target.lat, props.target.lng],
-        [props.current.lat, props.current.lng],
-      ]);
-      map.fitBounds(bounds, { padding: [32, 32] });
+      points.push([props.current.lat, props.current.lng]);
+    }
+
+    if (points.length === 1) {
+      map.setView(points[0], 15);
       return;
     }
 
-    map.setView([props.target.lat, props.target.lng], 15);
-  }, [map, props.current, props.target]);
+    map.fitBounds(latLngBounds(points), { padding: [30, 30] });
+  }, [map, props.current, props.waypoints]);
 
   return null;
 }
 
-function TravelMap(props: TravelMapProps): JSX.Element {
+function JourneyMap(props: JourneyMapProps): JSX.Element {
+  const target = props.waypoints[props.targetWaypointIndex] ?? props.waypoints[0] ?? null;
+
+  if (!target) {
+    return (
+      <Paper withBorder radius="md" p="lg">
+        <Text c="dimmed">No waypoint</Text>
+      </Paper>
+    );
+  }
+
   return (
     <MapContainer
-      center={[props.target.lat, props.target.lng]}
+      center={[target.lat, target.lng]}
       zoom={15}
       scrollWheelZoom
-      style={{ height: 240, width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
+      style={{ height: "100%", width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <FitTravelBounds target={props.target} current={props.current} />
+      <FitJourneyBounds waypoints={props.waypoints} current={props.current} />
+
+      {props.orderedRoute && props.waypoints.length > 1 ? (
+        <>
+          <Polyline
+            positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
+            pathOptions={{ color: "#1971c2", weight: 3, opacity: 0.65 }}
+          />
+          {props.waypoints.slice(0, -1).map((waypoint, index) => {
+            const next = props.waypoints[index + 1];
+            if (!next) return null;
+            return (
+              <CircleMarker
+                key={`journey-arrow-${waypoint.id}`}
+                center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
+                radius={1}
+                pathOptions={{ color: "#1971c2", fillColor: "#1971c2", fillOpacity: 0 }}
+              >
+                <LeafletTooltip permanent direction="center" offset={[0, 0]}>-&gt;</LeafletTooltip>
+              </CircleMarker>
+            );
+          })}
+        </>
+      ) : null}
+
+      {props.waypoints.map((waypoint, index) => {
+        const isTarget = index === props.targetWaypointIndex;
+        return (
+          <CircleMarker
+            key={`journey-waypoint-${waypoint.id}`}
+            center={[waypoint.lat, waypoint.lng]}
+            radius={isTarget ? 8 : 6}
+            pathOptions={{
+              color: isTarget ? "#0f6b5f" : "#74818f",
+              fillColor: isTarget ? "#0f6b5f" : "#adb5bd",
+              fillOpacity: 1,
+            }}
+          >
+            <LeafletTooltip permanent={isTarget} direction="top" offset={[0, -8]}>
+              {`${index + 1}. ${waypoint.title}`}
+            </LeafletTooltip>
+            {props.orderedRoute && index === 0 ? (
+              <LeafletTooltip permanent direction="bottom" offset={[0, 10]}>START</LeafletTooltip>
+            ) : null}
+            {props.orderedRoute && index === props.waypoints.length - 1 && props.waypoints.length > 1 ? (
+              <LeafletTooltip permanent direction="bottom" offset={[0, 24]}>END</LeafletTooltip>
+            ) : null}
+          </CircleMarker>
+        );
+      })}
+
       <Circle
-        center={[props.target.lat, props.target.lng]}
+        center={[target.lat, target.lng]}
         radius={props.radius}
-        pathOptions={{ color: "#0f6b5f", fillOpacity: 0.2 }}
+        pathOptions={{ color: "#0f6b5f", fillOpacity: 0.18 }}
       />
-      <CircleMarker
-        center={[props.target.lat, props.target.lng]}
-        radius={7}
-        pathOptions={{ color: "#0f6b5f", fillColor: "#0f6b5f", fillOpacity: 1 }}
-      >
-        <LeafletTooltip permanent direction="top" offset={[0, -10]}>{props.targetLabel}</LeafletTooltip>
-      </CircleMarker>
+
       {props.current ? (
         <CircleMarker
           center={[props.current.lat, props.current.lng]}
@@ -116,15 +182,20 @@ export function PlayQuizPage(): JSX.Element {
   const [nickname, setNickname] = useState("");
   const [summary, setSummary] = useState<QuizSummary | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [playable, setPlayable] = useState<FirstPlayable | null>(null);
+  const [quizWalk, setQuizWalk] = useState<QuizWalk | null>(null);
+
   const [debugWalk, setDebugWalk] = useState<QuizWalk | null>(null);
   const [debugWaypointIndex, setDebugWaypointIndex] = useState(0);
   const [debugQuestionIndex, setDebugQuestionIndex] = useState(0);
 
+  const [activeWaypointIndex, setActiveWaypointIndex] = useState(0);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [lockedWaypointIndex, setLockedWaypointIndex] = useState<number | null>(null);
+  const [answeredQuestionIds, setAnsweredQuestionIds] = useState<string[]>([]);
+
   const [distanceToWaypoint, setDistanceToWaypoint] = useState<number | null>(null);
   const [playerCoordinates, setPlayerCoordinates] = useState<Coordinates | null>(null);
   const [locationRefreshing, setLocationRefreshing] = useState(false);
-  const [waypointUnlocked, setWaypointUnlocked] = useState(false);
   const [cardPhase, setCardPhase] = useState<QuestionCardPhase>("back");
   const [preRevealCountdown, setPreRevealCountdown] = useState<number | null>(null);
 
@@ -141,6 +212,7 @@ export function PlayQuizPage(): JSX.Element {
 
   const [error, setError] = useState<string | null>(firebaseConfigError);
   const [loading, setLoading] = useState(false);
+  const [debugBarDismissed, setDebugBarDismissed] = useState(false);
 
   const debugWaypoint = debugWalk?.waypoints[debugWaypointIndex] ?? null;
   const debugQuestion = debugWaypoint?.questions[debugQuestionIndex] ?? null;
@@ -173,15 +245,30 @@ export function PlayQuizPage(): JSX.Element {
     return `${window.location.pathname}${query ? `?${query}` : ""}`;
   }, []);
 
+  const currentWaypoint = quizWalk?.waypoints[activeWaypointIndex] ?? null;
+  const currentQuestion =
+    lockedWaypointIndex !== null
+      ? quizWalk?.waypoints[lockedWaypointIndex]?.questions[activeQuestionIndex] ?? null
+      : null;
+
   const effectiveQuestionTimerSeconds = useMemo(() => {
-    if (!playable || !summary) return null;
-    return playable.question.config.timerSeconds ?? summary.questionTimeLimitSeconds ?? null;
-  }, [playable, summary]);
+    if (!currentQuestion || !summary) return null;
+    return currentQuestion.config.timerSeconds ?? summary.questionTimeLimitSeconds ?? null;
+  }, [currentQuestion, summary]);
 
   const remainingSeconds =
     questionDeadlineMs && cardPhase === "front"
       ? Math.max(0, Math.ceil((questionDeadlineMs - nowMs) / 1000))
       : null;
+
+  useEffect(() => {
+    if (!sessionId || !quizWalk || debugMode) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [debugMode, quizWalk, sessionId]);
 
   useEffect(() => {
     if (cardPhase !== "pre_countdown" || preRevealCountdown === null) return;
@@ -224,6 +311,50 @@ export function PlayQuizPage(): JSX.Element {
     setError(t("player.errorTimeExpired"));
   }, [answerResult, questionTimedOut, t]);
 
+  function getFirstUnansweredQuestionIndex(waypoint: QuizWalkWaypoint): number {
+    return waypoint.questions.findIndex((question) => !answeredQuestionIds.includes(question.id));
+  }
+
+  function getNextWaypointIndex(nextAnsweredQuestionIds: string[]): number | null {
+    if (!quizWalk) return null;
+
+    const unansweredIndexes = quizWalk.waypoints
+      .map((waypoint, index) => ({
+        index,
+        answeredCount: waypoint.questions.filter((question) => nextAnsweredQuestionIds.includes(question.id)).length,
+        total: waypoint.questions.length,
+      }))
+      .filter((entry) => entry.answeredCount < entry.total);
+
+    if (unansweredIndexes.length === 0) return null;
+
+    if (summary?.requireSequentialWaypoints ?? true) {
+      return unansweredIndexes[0]?.index ?? null;
+    }
+
+    if (!playerCoordinates) {
+      return unansweredIndexes[0]?.index ?? null;
+    }
+
+    const nearest = unansweredIndexes.reduce((best, entry) => {
+      const waypoint = quizWalk.waypoints[entry.index];
+      const d = distanceMeters(playerCoordinates, { lat: waypoint.lat, lng: waypoint.lng });
+      if (!best || d < best.distance) {
+        return { index: entry.index, distance: d };
+      }
+      return best;
+    }, null as { index: number; distance: number } | null);
+
+    return nearest?.index ?? unansweredIndexes[0]?.index ?? null;
+  }
+
+  function getGlobalQuestionNumber(waypointIndex: number, questionIndex: number): number {
+    if (!quizWalk) return 1;
+    return quizWalk.waypoints
+      .slice(0, waypointIndex)
+      .reduce((sum, waypoint) => sum + waypoint.questions.length, 0) + questionIndex + 1;
+  }
+
   async function loadQuiz(): Promise<void> {
     setLoading(true);
     setError(null);
@@ -235,14 +366,17 @@ export function PlayQuizPage(): JSX.Element {
         return;
       }
 
+      const walk = await getQuizWalk(quizId);
+      if (!walk) {
+        setError(t("player.errorNoPlayable"));
+        return;
+      }
+      setQuizWalk(walk);
+
       if (debugMode) {
-        const walk = await getQuizWalk(quizId);
         setDebugWalk(walk);
         setDebugWaypointIndex(0);
         setDebugQuestionIndex(0);
-        if (!walk) {
-          setError(t("player.errorNoPlayable"));
-        }
       }
     } catch (e) {
       setError((e as Error).message);
@@ -277,20 +411,22 @@ export function PlayQuizPage(): JSX.Element {
       setError(t("player.errorQuizClosed"));
       return;
     }
+    if (!quizWalk || quizWalk.waypoints.length === 0) {
+      setError(t("player.errorNoPlayable"));
+      return;
+    }
 
     setError(null);
     const sid = await startSession(quizId, nickname.trim());
     setSessionId(sid);
 
-    const firstPlayable = await getFirstPlayable(quizId);
-    if (!firstPlayable) {
-      setError(t("player.errorNoPlayable"));
-      return;
-    }
+    const firstWaypoint = getNextWaypointIndex([]) ?? 0;
+    const firstQuestion = getFirstUnansweredQuestionIndex(quizWalk.waypoints[firstWaypoint]);
 
-    setPlayable(firstPlayable);
+    setActiveWaypointIndex(firstWaypoint);
+    setActiveQuestionIndex(Math.max(0, firstQuestion));
+    setLockedWaypointIndex(null);
     setCardPhase("back");
-    setWaypointUnlocked(false);
     setAnswerResult(null);
     setSessionComplete(false);
     setSelectedChoiceIds([]);
@@ -299,39 +435,12 @@ export function PlayQuizPage(): JSX.Element {
     setQuestionTimedOut(false);
     setQuestionDeadlineMs(null);
     setPreRevealCountdown(null);
-  }
-
-  async function unlockWaypoint(): Promise<void> {
-    if (debugMode || !playable) return;
-    setError(null);
-
-    try {
-      const current = await getCurrentCoordinates();
-      setPlayerCoordinates(current);
-      const distance = distanceMeters(current, {
-        lat: playable.waypoint.lat,
-        lng: playable.waypoint.lng,
-      });
-      setDistanceToWaypoint(distance);
-
-      if (distance <= playable.waypoint.gateRadiusMeters) {
-        setWaypointUnlocked(true);
-        setCardPhase("back");
-      } else {
-        setError(
-          t("player.tooFarError", {
-            actual: Math.round(distance),
-            required: playable.waypoint.gateRadiusMeters,
-          })
-        );
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    setAnsweredQuestionIds([]);
+    setDebugBarDismissed(false);
   }
 
   async function refreshCurrentLocation(): Promise<void> {
-    if (debugMode || !playable) return;
+    if (debugMode || !currentWaypoint || sessionComplete) return;
     setLocationRefreshing(true);
     setError(null);
 
@@ -339,8 +448,8 @@ export function PlayQuizPage(): JSX.Element {
       const current = await getCurrentCoordinates();
       setPlayerCoordinates(current);
       const distance = distanceMeters(current, {
-        lat: playable.waypoint.lat,
-        lng: playable.waypoint.lng,
+        lat: currentWaypoint.lat,
+        lng: currentWaypoint.lng,
       });
       setDistanceToWaypoint(distance);
     } catch (e) {
@@ -351,7 +460,7 @@ export function PlayQuizPage(): JSX.Element {
   }
 
   useEffect(() => {
-    if (debugMode || !playable) return;
+    if (debugMode || !currentWaypoint || sessionComplete) return;
     if (!("geolocation" in navigator)) return;
 
     const watchId = navigator.geolocation.watchPosition(
@@ -362,13 +471,13 @@ export function PlayQuizPage(): JSX.Element {
         };
         setPlayerCoordinates(current);
         const distance = distanceMeters(current, {
-          lat: playable.waypoint.lat,
-          lng: playable.waypoint.lng,
+          lat: currentWaypoint.lat,
+          lng: currentWaypoint.lng,
         });
         setDistanceToWaypoint(distance);
       },
       () => {
-        // Ignore watch errors and keep manual refresh available.
+        // keep manual refresh available
       },
       {
         enableHighAccuracy: true,
@@ -378,10 +487,22 @@ export function PlayQuizPage(): JSX.Element {
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [debugMode, playable]);
+  }, [currentWaypoint, debugMode, sessionComplete]);
+
+  function getGateRadiusMeters(): number {
+    return summary?.waypointGateRadiusMeters ?? 40;
+  }
+
+  useEffect(() => {
+    if (!currentWaypoint || lockedWaypointIndex !== null || distanceToWaypoint === null || sessionComplete) return;
+    if (distanceToWaypoint > getGateRadiusMeters()) return;
+    setLockedWaypointIndex(activeWaypointIndex);
+    setCardPhase("back");
+    setError(null);
+  }, [activeWaypointIndex, currentWaypoint, distanceToWaypoint, lockedWaypointIndex, sessionComplete]);
 
   function revealQuestionCard(): void {
-    if (!playable) return;
+    if (!currentQuestion) return;
 
     setError(null);
     setQuestionTimedOut(false);
@@ -400,50 +521,8 @@ export function PlayQuizPage(): JSX.Element {
     setQuestionDeadlineMs(null);
   }
 
-  async function submitAnswer(): Promise<void> {
-    if (debugMode || !sessionId || !playable) return;
-    if (questionTimedOut) {
-      setError(t("player.errorTimeExpired"));
-      return;
-    }
-
-    const questionType = playable.question.questionType ?? "multiple_choice";
-    if (questionType === "multiple_choice" && selectedChoiceIds.length === 0) {
-      setError(t("player.errorSelectAnswer"));
-      return;
-    }
-    if (questionType === "numeric" && typeof numericAnswer !== "number") {
-      setError(t("player.errorNumericRequired"));
-      return;
-    }
-    if (questionType === "letter_order" && !letterOrderAnswer.trim()) {
-      setError(t("player.errorLetterOrderRequired"));
-      return;
-    }
-
-    const elapsedMs = questionStartMs ? Date.now() - questionStartMs : 0;
-    setError(null);
-    try {
-      const result = await submitFirstAnswer({
-        quizId,
-        sessionId,
-        waypointId: playable.waypoint.id,
-        questionId: playable.question.id,
-        selectedChoiceIds: questionType === "multiple_choice" ? selectedChoiceIds : [],
-        numericAnswer: questionType === "numeric" ? numericAnswer : null,
-        letterOrderAnswer: questionType === "letter_order" ? letterOrderAnswer : null,
-        elapsedMs,
-      });
-      setAnswerResult(result);
-      setSessionComplete(true);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  function renderQuestionInput(): JSX.Element | null {
-    if (!playable) return null;
-    const questionType = playable.question.questionType ?? "multiple_choice";
+  function renderQuestionInput(question: QuizWalkQuestion): JSX.Element | null {
+    const questionType = question.questionType ?? "multiple_choice";
 
     if (questionType === "numeric") {
       return (
@@ -468,12 +547,89 @@ export function PlayQuizPage(): JSX.Element {
     return (
       <Checkbox.Group value={selectedChoiceIds} onChange={setSelectedChoiceIds}>
         <Stack gap="xs">
-          {playable.question.choices.map((choice) => (
+          {question.choices.map((choice) => (
             <Checkbox key={choice.id} value={choice.id} label={choice.text} />
           ))}
         </Stack>
       </Checkbox.Group>
     );
+  }
+
+  async function submitAnswer(): Promise<void> {
+    if (debugMode || !sessionId || !quizWalk || lockedWaypointIndex === null || !currentQuestion) return;
+    if (questionTimedOut) {
+      setError(t("player.errorTimeExpired"));
+      return;
+    }
+
+    const questionType = currentQuestion.questionType ?? "multiple_choice";
+    if (questionType === "multiple_choice" && selectedChoiceIds.length === 0) {
+      setError(t("player.errorSelectAnswer"));
+      return;
+    }
+    if (questionType === "numeric" && typeof numericAnswer !== "number") {
+      setError(t("player.errorNumericRequired"));
+      return;
+    }
+    if (questionType === "letter_order" && !letterOrderAnswer.trim()) {
+      setError(t("player.errorLetterOrderRequired"));
+      return;
+    }
+
+    const elapsedMs = questionStartMs ? Date.now() - questionStartMs : 0;
+    setError(null);
+    try {
+      const result = await submitFirstAnswer({
+        quizId,
+        sessionId,
+        waypointId: quizWalk.waypoints[lockedWaypointIndex].id,
+        questionId: currentQuestion.id,
+        selectedChoiceIds: questionType === "multiple_choice" ? selectedChoiceIds : [],
+        numericAnswer: questionType === "numeric" ? numericAnswer : null,
+        letterOrderAnswer: questionType === "letter_order" ? letterOrderAnswer : null,
+        elapsedMs,
+      });
+      setAnswerResult(result);
+
+      const nextAnswered = [...answeredQuestionIds, currentQuestion.id];
+      setAnsweredQuestionIds(nextAnswered);
+
+      const lockedWaypoint = quizWalk.waypoints[lockedWaypointIndex];
+      const nextQuestionIdx = lockedWaypoint.questions.findIndex(
+        (question) => !nextAnswered.includes(question.id)
+      );
+
+      if (nextQuestionIdx >= 0) {
+        setActiveQuestionIndex(nextQuestionIdx);
+        setCardPhase("back");
+        setQuestionDeadlineMs(null);
+        setPreRevealCountdown(null);
+        setSelectedChoiceIds([]);
+        setNumericAnswer(null);
+        setLetterOrderAnswer("");
+        return;
+      }
+
+      const nextWaypointIndex = getNextWaypointIndex(nextAnswered);
+      if (nextWaypointIndex === null) {
+        setSessionComplete(true);
+        setLockedWaypointIndex(null);
+        return;
+      }
+
+      const firstQuestionIdx = getFirstUnansweredQuestionIndex(quizWalk.waypoints[nextWaypointIndex]);
+      setActiveWaypointIndex(nextWaypointIndex);
+      setActiveQuestionIndex(Math.max(0, firstQuestionIdx));
+      setLockedWaypointIndex(null);
+      setCardPhase("back");
+      setQuestionDeadlineMs(null);
+      setPreRevealCountdown(null);
+      setSelectedChoiceIds([]);
+      setNumericAnswer(null);
+      setLetterOrderAnswer("");
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   function renderAnswerFeedback(): JSX.Element | null {
@@ -510,32 +666,58 @@ export function PlayQuizPage(): JSX.Element {
     );
   }
 
+  const showGameplay = Boolean(sessionId && quizWalk && !debugMode && !sessionComplete);
+  const journeyMode = showGameplay && lockedWaypointIndex === null;
+  const cardMode = showGameplay && lockedWaypointIndex !== null && currentQuestion;
+  const showDebugBar = !debugBarDismissed || !showGameplay;
+
+  const currentWaypointQuestionCount =
+    lockedWaypointIndex !== null ? quizWalk?.waypoints[lockedWaypointIndex]?.questions.length ?? 0 : 0;
+  const currentQuestionGlobal =
+    lockedWaypointIndex !== null ? getGlobalQuestionNumber(lockedWaypointIndex, activeQuestionIndex) : 0;
+
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
-      <Stack gap="md">
-        <Title order={2}>{t("player.joinTitle")}</Title>
+      <Stack gap="md" style={showGameplay ? { height: "calc(100dvh - 170px)", overflow: "hidden" } : undefined}>
+        {!showGameplay ? <Title order={2}>{t("player.joinTitle")}</Title> : null}
 
+        {showDebugBar ? (
         <Alert color={debugMode ? "blue" : "gray"} variant="light">
           <Group justify="space-between" align="center" wrap="wrap">
             <Text size="sm">{debugMode ? t("player.debugMode") : t("player.debugToolsHint")}</Text>
-            <Button
-              size="xs"
-              variant="light"
-              component="a"
-              href={debugMode ? debugModeOffUrl : debugModeOnUrl}
-            >
-              {debugMode ? t("player.closeDebugTools") : t("player.openDebugTools")}
-            </Button>
+            <Group gap="xs" wrap="nowrap">
+              <Button
+                size="xs"
+                variant="light"
+                component="a"
+                href={debugMode ? debugModeOffUrl : debugModeOnUrl}
+              >
+                {debugMode ? t("player.closeDebugTools") : t("player.openDebugTools")}
+              </Button>
+              {showGameplay ? (
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  aria-label={t("player.hideDebugBar")}
+                  onClick={() => setDebugBarDismissed(true)}
+                >
+                  <IconX size={16} />
+                </ActionIcon>
+              ) : null}
+            </Group>
           </Group>
         </Alert>
+        ) : null}
 
+        {!showGameplay ? (
         <Group>
           <Button onClick={loadQuiz} loading={loading} disabled={Boolean(firebaseConfigError)}>
             {t("player.loadQuiz")}
           </Button>
         </Group>
+        ) : null}
 
-        {summary ? (
+        {summary && !sessionId ? (
           <Card withBorder radius="md">
             <Stack gap="sm">
               <Title order={3}>{summary.title}</Title>
@@ -552,106 +734,142 @@ export function PlayQuizPage(): JSX.Element {
           </Card>
         ) : null}
 
-        {playable ? (
-          <Card withBorder radius="md">
-            <Stack gap="sm">
-              <Group gap="xs">
-                <IconMapPin size={18} />
-                <Title order={4}>{t("player.waypointLabel", { title: playable.waypoint.title })}</Title>
-              </Group>
-              <Text c="dimmed" size="sm">
-                {t("player.waypointTarget", {
-                  lat: playable.waypoint.lat.toFixed(5),
-                  lng: playable.waypoint.lng.toFixed(5),
+        {journeyMode && quizWalk && currentWaypoint ? (
+          <Card withBorder radius="md" p="sm" style={{ flex: 1, minHeight: 0 }}>
+            <Stack gap="sm" style={{ height: "100%" }}>
+              <Text fw={700}>{t("player.journeyTowards", { nickname: nickname || t("player.locationYou") })}</Text>
+              <Title order={4}>
+                {t("player.journeyWaypointDistance", {
+                  waypoint: currentWaypoint.title,
+                  meters: Math.max(0, Math.round(distanceToWaypoint ?? 0)),
                 })}
-              </Text>
-              <Card withBorder radius="md" p="sm">
-                <Stack gap="xs">
-                  <Group gap="xs" align="center">
-                    <IconMap2 size={16} />
-                    <Text size="sm" fw={600}>{t("player.locationPanelTitle")}</Text>
-                  </Group>
-                  <TravelMap
-                    target={{ lat: playable.waypoint.lat, lng: playable.waypoint.lng }}
-                    current={playerCoordinates}
-                    radius={playable.waypoint.gateRadiusMeters}
-                    targetLabel={playable.waypoint.title}
-                    currentLabel={t("player.locationYou")}
-                  />
-                  <Group justify="space-between" align="center" wrap="wrap">
-                    <Text size="sm" c="dimmed">
-                      {playerCoordinates
-                        ? t("player.locationTracking", {
-                            lat: playerCoordinates.lat.toFixed(5),
-                            lng: playerCoordinates.lng.toFixed(5),
-                          })
-                        : t("player.locationCurrentUnknown")}
-                    </Text>
-                    <Button size="xs" variant="light" onClick={refreshCurrentLocation} loading={locationRefreshing}>
-                      {t("player.locationRefresh")}
-                    </Button>
-                  </Group>
-                </Stack>
-              </Card>
-              <Group>
-                <Button variant="light" onClick={unlockWaypoint} disabled={waypointUnlocked}>
-                  {waypointUnlocked ? t("player.waypointUnlocked") : t("player.checkWaypoint")}
+              </Title>
+
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <JourneyMap
+                  waypoints={quizWalk.waypoints}
+                  targetWaypointIndex={activeWaypointIndex}
+                  current={playerCoordinates}
+                  radius={getGateRadiusMeters()}
+                  currentLabel={nickname || t("player.locationYou")}
+                  orderedRoute={summary?.requireSequentialWaypoints ?? true}
+                />
+              </div>
+
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Text size="sm" c="dimmed">
+                  {playerCoordinates
+                    ? t("player.locationTracking", {
+                        lat: playerCoordinates.lat.toFixed(5),
+                        lng: playerCoordinates.lng.toFixed(5),
+                      })
+                    : t("player.locationCurrentUnknown")}
+                </Text>
+                <Button size="xs" variant="light" onClick={refreshCurrentLocation} loading={locationRefreshing}>
+                  {t("player.locationRefresh")}
                 </Button>
               </Group>
+            </Stack>
+          </Card>
+        ) : null}
 
-              {distanceToWaypoint !== null ? (
+        {cardMode && currentQuestion && quizWalk && lockedWaypointIndex !== null ? (
+          <Card withBorder radius="md" p="sm" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <Stack gap="sm" align="stretch" style={{ height: "100%" }}>
+              <Text fw={700}>
+                {t("player.atWaypoint", { nickname: nickname || t("player.locationYou"), waypoint: quizWalk.waypoints[lockedWaypointIndex].title })}
+              </Text>
+
+              {currentWaypointQuestionCount > 1 ? (
                 <Text c="dimmed" size="sm">
-                  {t("player.distanceAway", { meters: Math.round(distanceToWaypoint) })}
+                  {t("player.questionProgress", {
+                    global: currentQuestionGlobal,
+                    inWaypoint: activeQuestionIndex + 1,
+                    totalInWaypoint: currentWaypointQuestionCount,
+                  })}
                 </Text>
               ) : null}
 
-              {waypointUnlocked && !answerResult ? (
-                <Card withBorder radius="md" p="sm">
-                  <Stack gap="sm" align="stretch">
-                    {cardPhase === "back" ? (
-                      <>
+              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                <Stack gap="sm" align="stretch">
+                  {cardPhase !== "front" ? (
+                    <Paper
+                      className="kwiz-card-back kwiz-card-back-clickable"
+                      withBorder
+                      radius="md"
+                      p="md"
+                      style={{ minHeight: 320 }}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (cardPhase === "pre_countdown") return;
+                        revealQuestionCard();
+                      }}
+                      onKeyDown={(event) => {
+                        if (cardPhase === "pre_countdown") return;
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        revealQuestionCard();
+                      }}
+                    >
+                      {cardPhase === "pre_countdown" ? (
+                        <div className="kwiz-countdown-overlay" aria-live="polite">
+                          <Text size="xs" c="dimmed">{t("player.countdownReady")}</Text>
+                          <Title order={2} className="kwiz-countdown-number">{preRevealCountdown ?? 0}</Title>
+                        </div>
+                      ) : null}
+
+                      <Stack gap="sm" align="center" justify="center" style={{ minHeight: 280 }}>
+                        <Image
+                          src="/branding/kwizherologo.png"
+                          alt="KwizHero"
+                          h={64}
+                          w="100%"
+                          style={{ maxWidth: 240 }}
+                          fit="contain"
+                        />
                         <Text fw={700}>{t("player.cardBackTitle")}</Text>
                         <Text c="dimmed">{t("player.cardBackHint")}</Text>
                         {effectiveQuestionTimerSeconds !== null ? (
-                          <Alert color="orange" variant="light">
+                          <Alert color="orange" variant="light" w="100%">
                             {t("player.questionTimedNotice", { seconds: effectiveQuestionTimerSeconds })}
                           </Alert>
                         ) : null}
-                        <Button onClick={revealQuestionCard}>{t("player.revealQuestion")}</Button>
-                      </>
-                    ) : null}
-
-                    {cardPhase === "pre_countdown" ? (
-                      <Stack gap="xs" align="center">
-                        <Text c="dimmed">{t("player.countdownReady")}</Text>
-                        <Title order={1}>{preRevealCountdown ?? 0}</Title>
                       </Stack>
-                    ) : null}
+                    </Paper>
+                  ) : null}
 
-                    {cardPhase === "front" ? (
-                      <>
-                        <Title order={5}>{playable.question.text}</Title>
+                  {cardPhase === "front" ? (
+                    <div className="kwiz-reveal-enter">
+                      <Stack gap="sm">
+                        <Title order={5}>{currentQuestion.text}</Title>
                         {remainingSeconds !== null ? (
                           <Badge color={remainingSeconds <= 5 ? "red" : "teal"} size="lg">
                             {t("player.timeRemaining", { seconds: remainingSeconds })}
                           </Badge>
                         ) : null}
-                        {renderQuestionInput()}
+                        {renderQuestionInput(currentQuestion)}
                         <Group>
                           <Button onClick={submitAnswer} disabled={questionTimedOut}>
                             {t("player.submitAnswer")}
                           </Button>
                         </Group>
-                      </>
-                    ) : null}
-                  </Stack>
-                </Card>
-              ) : null}
-
-              {renderAnswerFeedback()}
+                      </Stack>
+                    </div>
+                  ) : null}
+                </Stack>
+              </div>
             </Stack>
           </Card>
         ) : null}
+
+        {sessionComplete ? (
+          <Alert icon={<IconTrophy size={16} />} color="teal" variant="light">
+            {t("player.journeyComplete")}
+          </Alert>
+        ) : null}
+
+        {renderAnswerFeedback()}
 
         {debugMode && debugWalk ? (
           <Card withBorder radius="md">

@@ -70,6 +70,7 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
+    requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     scoringStrategy: input.ruleset.scoringStrategy,
     winnerPolicy: "highest_score",
     updatedAt: serverTimestamp(),
@@ -144,6 +145,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     interQuestionTimeLimitSeconds: number | null;
     revealMode: "instant" | "on_completion" | "scheduled";
     revealAt: string | null;
+    waypointGateRadiusMeters?: number;
+    requireSequentialWaypoints?: boolean;
   };
 
   return {
@@ -157,6 +160,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     interQuestionTimeLimitSeconds: r.interQuestionTimeLimitSeconds ?? null,
     revealMode: r.revealMode ?? "instant",
     revealAt: r.revealAt ?? null,
+    waypointGateRadiusMeters: r.waypointGateRadiusMeters ?? 40,
+    requireSequentialWaypoints: r.requireSequentialWaypoints ?? true,
   };
 }
 

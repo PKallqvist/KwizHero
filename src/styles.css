@@ -12,3 +12,73 @@ body {
 .leaflet-container {
   font-family: inherit;
 }
+
+.kwiz-card-back {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(165deg, #ffffff 0%, #eef7f2 58%, #edf6fb 100%);
+}
+
+.kwiz-card-back-clickable {
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.kwiz-card-back-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 107, 95, 0.1);
+}
+
+.kwiz-countdown-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  min-height: 54px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 138, 0, 0.35);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+}
+
+.kwiz-countdown-number {
+  line-height: 1;
+  color: #d9480f;
+  animation: kwiz-countdown-pulse 850ms ease-in-out infinite;
+}
+
+.kwiz-reveal-enter {
+  animation: kwiz-reveal-flip 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: 50% 45%;
+}
+
+@keyframes kwiz-countdown-pulse {
+  0% {
+    transform: scale(0.86);
+    opacity: 0.72;
+  }
+  55% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.92);
+    opacity: 0.84;
+  }
+}
+
+@keyframes kwiz-reveal-flip {
+  0% {
+    opacity: 0;
+    transform: perspective(900px) rotateY(-22deg) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(900px) rotateY(0deg) scale(1);
+  }
+}
