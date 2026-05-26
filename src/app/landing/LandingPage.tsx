@@ -1,38 +1,26 @@
 import { Link } from "react-router-dom";
 import { Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
-import { useMediaQuery } from "@mantine/hooks";
 import { useTranslation } from "react-i18next";
 
 export function LandingPage(): JSX.Element {
   const { t } = useTranslation();
-  const isDesktop = useMediaQuery("(min-width: 62em)");
 
   return (
-    <Card
-      withBorder
-      radius="lg"
-      p="md"
-      style={{
-        minHeight: "calc(100dvh - 240px)",
-        background: "linear-gradient(140deg, #f8fbff 0%, #eef8f1 48%, #fff7ed 100%)",
-      }}
-    >
-      <Stack align="center" justify="center" gap={isDesktop ? 8 : "sm"} style={{ height: "100%" }}>
+    <Card withBorder radius="lg" p="md" className="landing-hero">
+      <Stack align="center" justify="center" className="landing-hero-content">
         <Image
           src="/branding/kwizherologo.png"
           alt="KwizHero logo"
           w="100%"
-          maw={isDesktop ? 520 : 440}
-          mah={isDesktop ? "22vh" : "30vh"}
-          style={{ width: "100%", objectFit: "contain" }}
+          className="landing-hero-logo"
           fit="contain"
           fallbackSrc="/robots.txt"
         />
         <Stack gap="xs" align="center">
-          <Title order={isDesktop ? 2 : 1} ta="center">
+          <Title order={2} ta="center">
             {t("landing.title")}
           </Title>
-          <Text ta="center" c="dimmed" maw={680}>
+          <Text ta="center" c="dimmed" className="landing-hero-subtitle">
             {t("landing.subtitle")}
           </Text>
         </Stack>

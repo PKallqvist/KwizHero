@@ -2,9 +2,12 @@ import { createTheme } from "@mantine/core";
 
 export const kwizTheme = createTheme({
   primaryColor: "teal",
+  defaultRadius: "md",
   fontFamily: "Aptos, Segoe UI, Candara, Trebuchet MS, sans-serif",
   radius: {
+    sm: "10px",
     md: "12px",
+    lg: "16px",
   },
   headings: {
     fontFamily: "Aptos Display, Aptos, Segoe UI, sans-serif",
@@ -22,5 +25,17 @@ export const kwizTheme = createTheme({
       "#0c554d",
       "#083f3a",
     ],
+  },
+  components: {
+    Card: {
+      defaultProps: {
+        radius: "md",
+      },
+    },
+    Paper: {
+      defaultProps: {
+        radius: "md",
+      },
+    },
   },
 });

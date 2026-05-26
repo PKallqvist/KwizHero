@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { latLngBounds } from "leaflet";
 import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
@@ -30,6 +30,7 @@ import {
 } from "@mantine/core";
 import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconTrash, IconX } from "@tabler/icons-react";
 import { useMediaQuery } from "@mantine/hooks";
+import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { createDraftQuiz, publishQuiz } from "../../platform/firebase/quizRepository";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
@@ -40,14 +41,20 @@ const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 type WizardStep = 1 | 2 | 3 | 4;
 type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 
-const previewChoiceBorderColors = ["#f08c00", "#2f9e44", "#4c6ef5", "#ae3ec9", "#0b7285", "#e8590c"];
+const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
+
+function previewChoiceCardStyle(index: number): CSSProperties {
+  return {
+    "--kwiz-choice-border": previewChoiceBorderColors[index % previewChoiceBorderColors.length],
+  } as CSSProperties;
+}
 
 interface WaypointPickerProps {
   waypoints: DraftWaypointInput[];
   selectedWaypointIndex: number;
   radius: number;
   orderedRoute: boolean;
-  height: number;
+  mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
   onChange: (lat: number, lng: number) => void;
@@ -77,7 +84,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
       center={[props.viewport?.lat ?? fallbackCenter.lat, props.viewport?.lng ?? fallbackCenter.lng]}
       zoom={props.viewport?.zoom ?? 14}
       scrollWheelZoom
-      style={{ height: props.height, width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
+      className={`kwiz-map-container ${props.mapHeightClassName}`}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -90,7 +97,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
         <>
           <Polyline
             positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
-            pathOptions={{ color: "#1971c2", weight: 3, opacity: 0.65 }}
+            pathOptions={{ color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 }}
           />
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
             const next = props.waypoints[index + 1];
@@ -100,7 +107,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
                 key={`route-arrow-${index}`}
                 center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
                 radius={2}
-                pathOptions={{ color: "#1971c2", fillColor: "#1971c2", fillOpacity: 0 }}
+                pathOptions={{ color: kwizTokens.map.routePath, fillColor: kwizTokens.map.routePath, fillOpacity: 0 }}
               >
                 <LeafletTooltip permanent direction="center" offset={[0, 0]}>➜</LeafletTooltip>
               </CircleMarker>
@@ -119,14 +126,17 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
             <Circle
               center={[waypoint.lat, waypoint.lng]}
               radius={zoneRadius}
-              pathOptions={{ color: isSelected ? "#0f6b5f" : "#74818f", fillOpacity: isSelected ? 0.2 : 0.1 }}
+              pathOptions={{
+                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
+                fillOpacity: isSelected ? 0.2 : 0.1,
+              }}
             />
             <CircleMarker
               center={[waypoint.lat, waypoint.lng]}
               radius={isSelected ? 8 : 6}
               pathOptions={{
-                color: isSelected ? "#0f6b5f" : "#74818f",
-                fillColor: isSelected ? "#0f6b5f" : "#adb5bd",
+                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
+                fillColor: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointDefault,
                 fillOpacity: 1,
               }}
             >
@@ -138,7 +148,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
               <CircleMarker
                 center={[waypoint.lat, waypoint.lng]}
                 radius={1}
-                pathOptions={{ color: "#2f9e44", fillColor: "#2f9e44", fillOpacity: 0 }}
+                pathOptions={{ color: kwizTokens.map.startFlag, fillColor: kwizTokens.map.startFlag, fillOpacity: 0 }}
               >
                 <LeafletTooltip permanent direction="bottom" offset={[0, 10]}>START</LeafletTooltip>
               </CircleMarker>
@@ -147,7 +157,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
               <CircleMarker
                 center={[waypoint.lat, waypoint.lng]}
                 radius={1}
-                pathOptions={{ color: "#d9480f", fillColor: "#d9480f", fillOpacity: 0 }}
+                pathOptions={{ color: kwizTokens.map.endFlag, fillColor: kwizTokens.map.endFlag, fillOpacity: 0 }}
               >
                 <LeafletTooltip permanent direction="bottom" offset={[0, 10]}>END</LeafletTooltip>
               </CircleMarker>
@@ -225,7 +235,7 @@ function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
       center={[fallbackCenter.lat, fallbackCenter.lng]}
       zoom={13}
       scrollWheelZoom
-      style={{ height: 170, width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
+      className="kwiz-map-overview"
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -241,14 +251,17 @@ function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
             <Circle
               center={[waypoint.lat, waypoint.lng]}
               radius={zoneRadius}
-              pathOptions={{ color: isSelected ? "#0f6b5f" : "#74818f", fillOpacity: isSelected ? 0.2 : 0.1 }}
+              pathOptions={{
+                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
+                fillOpacity: isSelected ? 0.2 : 0.1,
+              }}
             />
             <CircleMarker
               center={[waypoint.lat, waypoint.lng]}
               radius={isSelected ? 8 : 6}
               pathOptions={{
-                color: isSelected ? "#0f6b5f" : "#74818f",
-                fillColor: isSelected ? "#0f6b5f" : "#adb5bd",
+                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
+                fillColor: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointDefault,
                 fillOpacity: 1,
               }}
             >
@@ -942,25 +955,13 @@ export function CreateQuizPage(): JSX.Element {
     (step === 3 && hasWaypointData && hasQuestionData) ||
     step === 4;
 
-  const routeMapHeight = coordinatesOverlayOpen
+  const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
-      ? 620
-      : 500
+      ? "kwiz-map-picker-two-col-expanded"
+      : "kwiz-map-picker-single-col-expanded"
     : isTwoColumnRouteLayout
-      ? 460
-      : 320;
-
-  const mobileWaypointNavStyle = isMobilePreviewLayout
-    ? {
-        position: "sticky" as const,
-        top: 8,
-        zIndex: 260,
-        background: "var(--mantine-color-body)",
-        border: "1px solid var(--mantine-color-gray-3)",
-        borderRadius: 10,
-        padding: "8px",
-      }
-    : undefined;
+      ? "kwiz-map-picker-two-col"
+      : "kwiz-map-picker-single-col";
 
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
@@ -1143,14 +1144,15 @@ export function CreateQuizPage(): JSX.Element {
 
         {step === 3 ? (
           <Stack gap="md">
-            <Group justify="space-between" align="center" wrap="nowrap" style={mobileWaypointNavStyle}>
+            <Group
+              justify="space-between"
+              align="center"
+              wrap="nowrap"
+              className={isMobilePreviewLayout ? "kwiz-creator-mobile-waypoint-nav" : undefined}
+            >
               <Group
                 wrap={isMobilePreviewLayout ? "nowrap" : "wrap"}
-                style={{
-                  flex: 1,
-                  overflowX: isMobilePreviewLayout ? "auto" : undefined,
-                  scrollbarWidth: "thin",
-                }}
+                className={`kwiz-creator-waypoint-row${isMobilePreviewLayout ? " kwiz-creator-waypoint-row-scroll" : ""}`}
               >
                 {input.waypoints.map((waypoint, index) => {
                   const questionCount = waypoint.questions.length;
@@ -1185,7 +1187,7 @@ export function CreateQuizPage(): JSX.Element {
                     <Group justify="space-between" align="end" wrap="nowrap">
                       <TextInput
                         label={t("creator.route.labelName")}
-                        style={{ flex: 1 }}
+                        className="kwiz-creator-flex-1"
                         value={currentWaypoint.name}
                         onChange={(e) => updateCurrentWaypoint({ ...currentWaypoint, name: e.currentTarget.value })}
                       />
@@ -1247,10 +1249,10 @@ export function CreateQuizPage(): JSX.Element {
 
               {currentWaypoint ? (
                 <Card withBorder radius="md" p="sm">
-                  <Stack gap="xs" style={{ position: "relative" }}>
+                  <Stack gap="xs" className="kwiz-creator-map-shell">
                     <Text size="sm" fw={600}>{t("creator.route.mapHint")}</Text>
                     {addMultipleWaypointsMode ? (
-                      <Badge color="orange" variant="light" style={{ alignSelf: "flex-start" }}>
+                      <Badge color="orange" variant="light" className="kwiz-align-self-start">
                         {t("creator.route.addMultipleWaypointsActive")}
                       </Badge>
                     ) : null}
@@ -1259,15 +1261,7 @@ export function CreateQuizPage(): JSX.Element {
                         withBorder
                         radius="md"
                         p="sm"
-                        style={{
-                          position: "absolute",
-                          top: 42,
-                          right: 8,
-                          zIndex: 600,
-                          width: 238,
-                          background: "rgba(255, 255, 255, 0.84)",
-                          backdropFilter: "blur(4px)",
-                        }}
+                        className="kwiz-creator-coordinates-overlay"
                       >
                         <Stack gap="xs">
                           <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
@@ -1306,7 +1300,7 @@ export function CreateQuizPage(): JSX.Element {
                       selectedWaypointIndex={selectedWaypointIndex}
                       radius={input.ruleset.waypointGateRadiusMeters}
                       orderedRoute={input.ruleset.requireSequentialWaypoints}
-                      height={routeMapHeight}
+                      mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
                       onViewportChange={setRouteMapViewport}
                       onChange={handleRouteMapClick}
@@ -1322,7 +1316,7 @@ export function CreateQuizPage(): JSX.Element {
 
                   {currentWaypoint.questions.length === 0 ? (
                     <Card withBorder radius="md" p="xl">
-                      <Stack align="center" justify="center" gap="md" style={{ minHeight: 220 }}>
+                      <Stack align="center" justify="center" gap="md" className="kwiz-creator-empty-waypoint">
                         <Text size="sm" c="dimmed">This waypoint has no cards yet.</Text>
                         <Button leftSection={<IconPlus size={16} />} onClick={addQuestionToCurrentWaypoint}>
                           {t("creator.questions.addCard")}
@@ -1339,14 +1333,7 @@ export function CreateQuizPage(): JSX.Element {
                     withBorder={!isMobilePreviewLayout}
                     radius={isMobilePreviewLayout ? "sm" : "md"}
                     p={isMobilePreviewLayout ? 0 : "sm"}
-                    style={
-                      isMobilePreviewLayout
-                        ? {
-                            marginInline: -8,
-                            background: "transparent",
-                          }
-                        : undefined
-                    }
+                    className={isMobilePreviewLayout ? "kwiz-creator-mobile-preview-shell" : undefined}
                   >
                     <Stack gap="sm">
                       <Group justify="space-between" align="center" wrap="nowrap">
@@ -1416,7 +1403,7 @@ export function CreateQuizPage(): JSX.Element {
                       ) : null}
 
                       {isMobilePreviewLayout ? (
-                        <Group justify="center" gap="xs" wrap="nowrap" style={{ width: "100%" }}>
+                        <Group justify="center" gap="xs" wrap="nowrap" className="kwiz-creator-mobile-swipe-hint">
                           <ActionIcon
                             variant="subtle"
                             size="sm"
@@ -1445,7 +1432,7 @@ export function CreateQuizPage(): JSX.Element {
                             variant="subtle"
                             onClick={goToPreviousQuestion}
                             disabled={!hasPreviousQuestion || previewEditing}
-                            style={{ alignSelf: "center" }}
+                            className="kwiz-align-self-center"
                           >
                             <IconChevronLeft size={20} />
                           </Button>
@@ -1455,18 +1442,7 @@ export function CreateQuizPage(): JSX.Element {
                           withBorder={!isMobilePreviewLayout}
                           radius={isMobilePreviewLayout ? "sm" : "lg"}
                           p={isMobilePreviewLayout ? "sm" : "md"}
-                          style={{
-                            width: isMobilePreviewLayout ? "calc(100% + 16px)" : "100%",
-                            maxWidth: isMobilePreviewLayout ? "none" : 390,
-                            minHeight: isMobilePreviewLayout ? 0 : 620,
-                            marginInline: isMobilePreviewLayout ? -8 : 0,
-                            background: isMobilePreviewLayout
-                              ? "linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%)"
-                              : "linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%)",
-                            borderTop: isMobilePreviewLayout ? "1px solid var(--mantine-color-gray-3)" : undefined,
-                            borderBottom: isMobilePreviewLayout ? "1px solid var(--mantine-color-gray-3)" : undefined,
-                            touchAction: previewEditing ? "auto" : "pan-y",
-                          }}
+                          className={`kwiz-creator-preview-frame${isMobilePreviewLayout ? " kwiz-creator-preview-frame-mobile" : ""}${previewEditing ? " kwiz-touch-auto" : " kwiz-touch-pan-y"}`}
                           onPointerDown={onPreviewPointerDown}
                           onPointerUp={onPreviewPointerUp}
                         >
@@ -1486,7 +1462,7 @@ export function CreateQuizPage(): JSX.Element {
                                       alt="KwizHero"
                                       h={62}
                                       w="100%"
-                                      style={{ maxWidth: 220 }}
+                                      className="kwiz-creator-preview-logo"
                                       fit="contain"
                                     />
                                     <Text fw={700} size="lg">{t("creator.questions.previewQuestionCardTitle")}</Text>
@@ -1524,7 +1500,8 @@ export function CreateQuizPage(): JSX.Element {
                                           withBorder
                                           radius="md"
                                           p="sm"
-                                          style={{ borderColor: previewChoiceBorderColors[index % previewChoiceBorderColors.length] }}
+                                          className="kwiz-creator-choice-card"
+                                          style={previewChoiceCardStyle(index)}
                                         >
                                           <Stack gap="xs">
                                             <Group justify="space-between" align="center" wrap="nowrap">
@@ -1567,7 +1544,8 @@ export function CreateQuizPage(): JSX.Element {
                                           withBorder
                                           radius="md"
                                           p="sm"
-                                          style={{ borderColor: previewChoiceBorderColors[currentQuestion.choices.length % previewChoiceBorderColors.length] }}
+                                          className="kwiz-creator-choice-card"
+                                          style={previewChoiceCardStyle(currentQuestion.choices.length)}
                                         >
                                           <Stack gap="xs">
                                             <Group justify="space-between" align="center" wrap="nowrap">
@@ -1609,9 +1587,10 @@ export function CreateQuizPage(): JSX.Element {
                                           withBorder
                                           radius="md"
                                           p="sm"
-                                          style={{ borderColor: previewChoiceBorderColors[currentQuestion.choices.length % previewChoiceBorderColors.length] }}
+                                          className="kwiz-creator-choice-card"
+                                          style={previewChoiceCardStyle(currentQuestion.choices.length)}
                                         >
-                                          <Stack justify="center" align="center" style={{ minHeight: 92 }}>
+                                          <Stack justify="center" align="center" className="kwiz-creator-choice-add-shell">
                                             <ActionIcon variant="subtle" color="teal" onClick={() => {
                                               setChoiceDraftVisible(true);
                                               requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
@@ -1664,7 +1643,7 @@ export function CreateQuizPage(): JSX.Element {
                             variant="subtle"
                             onClick={goToNextQuestion}
                             disabled={!hasNextQuestion || previewEditing}
-                            style={{ alignSelf: "center" }}
+                            className="kwiz-align-self-center"
                           >
                             <IconChevronRight size={20} />
                           </Button>

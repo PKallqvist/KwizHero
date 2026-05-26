@@ -37,6 +37,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
+import { kwizTokens } from "../../platform/theme/kwizTokens";
 import {
   getQuizWalk,
   getQuizSummary,
@@ -97,7 +98,7 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
       center={[target.lat, target.lng]}
       zoom={15}
       scrollWheelZoom
-      style={{ height: "100%", width: "100%", borderRadius: 12, border: "1px solid var(--mantine-color-gray-4)" }}
+      className="kwiz-map-container kwiz-player-fill-stack"
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -109,7 +110,7 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
         <>
           <Polyline
             positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
-            pathOptions={{ color: "#1971c2", weight: 3, opacity: 0.65 }}
+            pathOptions={{ color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 }}
           />
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
             const next = props.waypoints[index + 1];
@@ -119,7 +120,7 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
                 key={`journey-arrow-${waypoint.id}`}
                 center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
                 radius={1}
-                pathOptions={{ color: "#1971c2", fillColor: "#1971c2", fillOpacity: 0 }}
+                pathOptions={{ color: kwizTokens.map.routePath, fillColor: kwizTokens.map.routePath, fillOpacity: 0 }}
               >
                 <LeafletTooltip permanent direction="center" offset={[0, 0]}>-&gt;</LeafletTooltip>
               </CircleMarker>
@@ -136,8 +137,8 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
             center={[waypoint.lat, waypoint.lng]}
             radius={isTarget ? 8 : 6}
             pathOptions={{
-              color: isTarget ? "#0f6b5f" : "#74818f",
-              fillColor: isTarget ? "#0f6b5f" : "#adb5bd",
+              color: isTarget ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
+              fillColor: isTarget ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointDefault,
               fillOpacity: 1,
             }}
           >
@@ -157,14 +158,14 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
       <Circle
         center={[target.lat, target.lng]}
         radius={props.radius}
-        pathOptions={{ color: "#0f6b5f", fillOpacity: 0.18 }}
+        pathOptions={{ color: kwizTokens.map.selectedWaypoint, fillOpacity: 0.18 }}
       />
 
       {props.current ? (
         <CircleMarker
           center={[props.current.lat, props.current.lng]}
           radius={7}
-          pathOptions={{ color: "#1c7ed6", fillColor: "#1c7ed6", fillOpacity: 1 }}
+          pathOptions={{ color: kwizTokens.map.playerPin, fillColor: kwizTokens.map.playerPin, fillOpacity: 1 }}
         >
           <LeafletTooltip permanent direction="top" offset={[0, -10]}>{props.currentLabel}</LeafletTooltip>
         </CircleMarker>
@@ -678,7 +679,7 @@ export function PlayQuizPage(): JSX.Element {
 
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
-      <Stack gap="md" style={showGameplay ? { height: "calc(100dvh - 170px)", overflow: "hidden" } : undefined}>
+      <Stack gap="md" className={showGameplay ? "kwiz-player-gameplay-root" : undefined}>
         {!showGameplay ? <Title order={2}>{t("player.joinTitle")}</Title> : null}
 
         {showDebugBar ? (
@@ -735,8 +736,8 @@ export function PlayQuizPage(): JSX.Element {
         ) : null}
 
         {journeyMode && quizWalk && currentWaypoint ? (
-          <Card withBorder radius="md" p="sm" style={{ flex: 1, minHeight: 0 }}>
-            <Stack gap="sm" style={{ height: "100%" }}>
+          <Card withBorder radius="md" p="sm" className="kwiz-player-fill-card">
+            <Stack gap="sm" className="kwiz-player-fill-stack">
               <Text fw={700}>{t("player.journeyTowards", { nickname: nickname || t("player.locationYou") })}</Text>
               <Title order={4}>
                 {t("player.journeyWaypointDistance", {
@@ -745,7 +746,7 @@ export function PlayQuizPage(): JSX.Element {
                 })}
               </Title>
 
-              <div style={{ flex: 1, minHeight: 0 }}>
+              <div className="kwiz-player-fill-pane">
                 <JourneyMap
                   waypoints={quizWalk.waypoints}
                   targetWaypointIndex={activeWaypointIndex}
@@ -774,8 +775,8 @@ export function PlayQuizPage(): JSX.Element {
         ) : null}
 
         {cardMode && currentQuestion && quizWalk && lockedWaypointIndex !== null ? (
-          <Card withBorder radius="md" p="sm" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <Stack gap="sm" align="stretch" style={{ height: "100%" }}>
+          <Card withBorder radius="md" p="sm" className="kwiz-player-fill-card-hidden">
+            <Stack gap="sm" align="stretch" className="kwiz-player-fill-stack">
               <Text fw={700}>
                 {t("player.atWaypoint", { nickname: nickname || t("player.locationYou"), waypoint: quizWalk.waypoints[lockedWaypointIndex].title })}
               </Text>
@@ -790,15 +791,14 @@ export function PlayQuizPage(): JSX.Element {
                 </Text>
               ) : null}
 
-              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <div className="kwiz-player-fill-pane-hidden">
                 <Stack gap="sm" align="stretch">
                   {cardPhase !== "front" ? (
                     <Paper
-                      className="kwiz-card-back kwiz-card-back-clickable"
                       withBorder
                       radius="md"
                       p="md"
-                      style={{ minHeight: 320 }}
+                      className="kwiz-card-back kwiz-card-back-clickable kwiz-card-back-min"
                       role="button"
                       tabIndex={0}
                       onClick={() => {
@@ -819,13 +819,13 @@ export function PlayQuizPage(): JSX.Element {
                         </div>
                       ) : null}
 
-                      <Stack gap="sm" align="center" justify="center" style={{ minHeight: 280 }}>
+                      <Stack gap="sm" align="center" justify="center" className="kwiz-card-back-content">
                         <Image
                           src="/branding/kwizherologo.png"
                           alt="KwizHero"
                           h={64}
                           w="100%"
-                          style={{ maxWidth: 240 }}
+                          className="kwiz-card-back-logo"
                           fit="contain"
                         />
                         <Text fw={700}>{t("player.cardBackTitle")}</Text>
