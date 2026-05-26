@@ -58,6 +58,23 @@ export interface QuizSummary {
   requireSequentialWaypoints: boolean;
 }
 
+export interface QuizListItem {
+  id: string;
+  title: string;
+  description: string;
+  status: "draft" | "published";
+  waypointCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  nickname: string;
+  score: number;
+  completedAt: string | null;
+}
+
 export interface QuizWalkQuestion {
   id: string;
   order: number;

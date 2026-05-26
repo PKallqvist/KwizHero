@@ -31,6 +31,11 @@ const LandingPage = lazy(async () => {
   return { default: module.LandingPage };
 });
 
+const UserQuizzesPage = lazy(async () => {
+  const module = await import("./app/user/UserQuizzesPage");
+  return { default: module.UserQuizzesPage };
+});
+
 export function App(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -50,6 +55,9 @@ export function App(): JSX.Element {
               </Anchor>
               <Anchor component={Link} to="/play/demo">
                 {t("nav.play")}
+              </Anchor>
+              <Anchor component={Link} to="/my-quizzes">
+                {t("nav.myQuizzes")}
               </Anchor>
             </Group>
             <Group>
@@ -75,6 +83,7 @@ export function App(): JSX.Element {
               <Route path="/" element={<LandingPage />} />
               <Route path="/create" element={<CreateQuizPage />} />
               <Route path="/play/:quizId" element={<PlayQuizPage />} />
+              <Route path="/my-quizzes" element={<UserQuizzesPage />} />
             </Routes>
           </Suspense>
         </Stack>

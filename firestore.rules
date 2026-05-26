@@ -5,38 +5,50 @@ service cloud.firestore {
       return name is string && name.size() >= 2 && name.size() <= 32;
     }
 
+    function isQuizOwner(quizId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/quizzes/$(quizId)).data.creatorUid == request.auth.uid;
+    }
+
     match /quizzes/{quizId} {
       allow read: if true;
 
-      allow create: if request.resource.data.keys().hasAll([
-        'title', 'description', 'status', 'defaultLocale', 'createdAt', 'updatedAt', 'waypointCount'
-      ]);
+      allow create: if request.auth != null
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'title', 'description', 'status', 'defaultLocale', 'createdAt', 'updatedAt', 'waypointCount', 'creatorUid'
+        ]);
 
-      allow update: if false;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.creatorUid
+        && request.resource.data.creatorUid == resource.data.creatorUid;
     }
 
     match /quizSecrets/{quizId} {
       allow read: if false;
-      allow create: if request.resource.data.keys().hasAll(['editKeyHash', 'createdAt']);
+      allow create: if isQuizOwner(quizId)
+        && request.resource.data.keys().hasAll(['editKeyHash', 'createdAt']);
       allow update, delete: if false;
     }
 
     match /quizRules/{quizId} {
       allow read: if true;
-      allow create: if true;
-      allow update: if false;
+      allow create: if isQuizOwner(quizId);
+      allow update: if isQuizOwner(quizId);
     }
 
     match /quizzes/{quizId}/waypoints/{waypointId} {
       allow read: if true;
-      allow create: if true;
-      allow update: if false;
+      allow create: if isQuizOwner(quizId);
+      allow update: if isQuizOwner(quizId);
+      allow delete: if isQuizOwner(quizId);
     }
 
     match /quizzes/{quizId}/waypoints/{waypointId}/questions/{questionId} {
       allow read: if true;
-      allow create: if true;
-      allow update: if false;
+      allow create: if isQuizOwner(quizId);
+      allow update: if isQuizOwner(quizId);
+      allow delete: if isQuizOwner(quizId);
     }
 
     match /participantSessions/{sessionId} {

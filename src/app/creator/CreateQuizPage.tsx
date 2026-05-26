@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { Link, useSearchParams } from "react-router-dom";
 import { latLngBounds } from "leaflet";
 import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
 import QRCode from "qrcode";
@@ -32,7 +33,7 @@ import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, Ic
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
-import { createDraftQuiz, publishQuiz } from "../../platform/firebase/quizRepository";
+import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
 
 const now = new Date();
@@ -365,6 +366,9 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
 
 export function CreateQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
+  const [searchParams] = useSearchParams();
+  const editingQuizId = (searchParams.get("quizId") ?? "").trim();
+  const isEditingExistingQuiz = editingQuizId.length > 0;
   const isTwoColumnRouteLayout = useMediaQuery("(min-width: 75em)");
   const isMobilePreviewLayout = useMediaQuery("(max-width: 48em)");
   const [step, setStep] = useState<WizardStep>(1);
@@ -390,6 +394,8 @@ export function CreateQuizPage(): JSX.Element {
   const [result, setResult] = useState<{ quizId: string; editKey: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(firebaseConfigError);
+  const [loadingEditableQuiz, setLoadingEditableQuiz] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
@@ -417,7 +423,7 @@ export function CreateQuizPage(): JSX.Element {
 
   const shareLink = useMemo(() => {
     if (!result) return "";
-    return `${window.location.origin}/play/${result.quizId}`;
+    return buildPlayShareLink(result.quizId);
   }, [result]);
 
   useEffect(() => {
@@ -431,6 +437,44 @@ export function CreateQuizPage(): JSX.Element {
     }
     buildQr().catch(() => setQrDataUrl(""));
   }, [shareLink]);
+
+  useEffect(() => {
+    if (!isEditingExistingQuiz) return;
+
+    let mounted = true;
+
+    async function loadEditableQuiz(): Promise<void> {
+      setError(null);
+      setLoadingEditableQuiz(true);
+      try {
+        const editable = await getEditableQuizDraft(editingQuizId);
+        if (!mounted) return;
+        setInput(editable.input);
+        setSelectedWaypointIndex(0);
+        setSelectedQuestionIndex(0);
+        setResult((previous) => {
+          if (previous?.quizId === editable.quizId) return previous;
+          return { quizId: editable.quizId, editKey: "" };
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setError(getReadableError(e));
+      } finally {
+        if (!mounted) return;
+        setLoadingEditableQuiz(false);
+      }
+    }
+
+    loadEditableQuiz().catch(() => {
+      if (!mounted) return;
+      setLoadingEditableQuiz(false);
+      setError("Failed to load quiz");
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [editingQuizId, isEditingExistingQuiz]);
 
   function updateCurrentWaypoint(next: DraftWaypointInput): void {
     setInput((prev) => {
@@ -752,16 +796,27 @@ export function CreateQuizPage(): JSX.Element {
 
   async function onCreate(): Promise<void> {
     setError(null);
+    setSavingDraft(true);
     try {
+      if (isEditingExistingQuiz) {
+        await updateQuizDraft(editingQuizId, input);
+        setResult((previous) => ({
+          quizId: editingQuizId,
+          editKey: previous?.quizId === editingQuizId ? previous.editKey : "",
+        }));
+        return;
+      }
       const created = await createDraftQuiz(input);
       setResult(created);
     } catch (e) {
       setError(getReadableError(e));
+    } finally {
+      setSavingDraft(false);
     }
   }
 
   async function onPublish(): Promise<void> {
-    if (!result) return;
+    if (!result?.editKey) return;
     setPublishing(true);
     setError(null);
     try {
@@ -954,6 +1009,7 @@ export function CreateQuizPage(): JSX.Element {
     step === 2 ||
     (step === 3 && hasWaypointData && hasQuestionData) ||
     step === 4;
+  const canPublishCurrentQuiz = Boolean(result?.editKey);
 
   const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
@@ -969,6 +1025,19 @@ export function CreateQuizPage(): JSX.Element {
         <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
         <Text c="dimmed">{t("creator.step", { current: step, total: 4 })}</Text>
+        {isEditingExistingQuiz ? (
+          <Alert icon={<IconAlertCircle size={16} />} color="blue" variant="light">
+            <Stack gap={4}>
+              <Text size="sm" fw={600}>{t("creator.publish.editingBannerTitle")}</Text>
+              <Text size="sm">{t("creator.publish.editingBannerBody", { quizId: editingQuizId })}</Text>
+              <Group>
+                <Button component={Link} to="/my-quizzes" variant="subtle" size="xs">
+                  {t("creator.publish.backToMyQuizzes")}
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
+        ) : null}
 
         <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
           <Stepper.Step label={t("creator.steps.identity")} />
@@ -1903,19 +1972,24 @@ export function CreateQuizPage(): JSX.Element {
               <Stack gap="sm">
                 <Title order={4}>{t("creator.publish.publishHeading")}</Title>
                 <Group>
-                  <Button onClick={onCreate} disabled={Boolean(firebaseConfigError)}>
-                    {t("creator.publish.createDraft")}
+                  <Button onClick={onCreate} disabled={Boolean(firebaseConfigError) || loadingEditableQuiz} loading={savingDraft}>
+                    {isEditingExistingQuiz ? t("creator.publish.saveDraftChanges") : t("creator.publish.createDraft")}
                   </Button>
-                  <Button variant="light" onClick={onPublish} disabled={!result || Boolean(firebaseConfigError)} loading={publishing}>
-                    {t("creator.publish.publish")}
-                  </Button>
+                  {canPublishCurrentQuiz ? (
+                    <Button variant="light" onClick={onPublish} disabled={Boolean(firebaseConfigError) || loadingEditableQuiz} loading={publishing}>
+                      {t("creator.publish.publish")}
+                    </Button>
+                  ) : null}
                 </Group>
+                {isEditingExistingQuiz && !canPublishCurrentQuiz ? (
+                  <Text size="xs" c="dimmed">{t("creator.publish.publishDisabledNoEditKey")}</Text>
+                ) : null}
                 {result ? (
                   <Alert icon={<IconCircleCheck size={16} />} color="teal" variant="light">
                     <Stack gap={4}>
-                      <Text size="sm" fw={600}>{t("creator.publish.editKeyWarning")}</Text>
+                      {result.editKey ? <Text size="sm" fw={600}>{t("creator.publish.editKeyWarning")}</Text> : null}
                       <Text size="sm">{t("creator.publish.labelQuizId")}: {result.quizId}</Text>
-                      <Text size="sm">{t("creator.publish.labelEditKey")}: {result.editKey}</Text>
+                      {result.editKey ? <Text size="sm">{t("creator.publish.labelEditKey")}: {result.editKey}</Text> : null}
                       <Text size="sm">{t("creator.publish.shareLink")}: {shareLink}</Text>
                     </Stack>
                   </Alert>
