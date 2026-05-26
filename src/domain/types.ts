@@ -1,19 +1,31 @@
 export type RevealMode = "instant" | "on_completion" | "scheduled";
+export type QuestionType = "multiple_choice" | "numeric" | "letter_order";
+
+export interface QuestionConfig {
+  timerSeconds: number | null;
+  numericTolerance: number | null;
+}
 
 export interface Ruleset {
   openAt: string;
   closeAt: string;
-  questionTimeLimitSeconds: number;
+  questionTimeLimitSeconds: number | null;
+  interQuestionTimeLimitSeconds: number | null;
   revealMode: RevealMode;
   revealAt: string | null;
   waypointGateRadiusMeters: number;
+  requireSequentialWaypoints: boolean;
   scoringStrategy: "binary_correct_1_point";
 }
 
 export interface DraftQuestionInput {
+  questionType: QuestionType;
   text: string;
-  choices: [string, string, string, string];
-  correctIndex: number;
+  choices: string[];
+  correctChoiceIndexes: number[];
+  numericAnswer: number | null;
+  letterOrderAnswer: string | null;
+  config: QuestionConfig;
 }
 
 export interface DraftWaypointInput {
@@ -38,6 +50,37 @@ export interface QuizSummary {
   status: "draft" | "published";
   openAt: string;
   closeAt: string;
+  questionTimeLimitSeconds: number | null;
+  interQuestionTimeLimitSeconds: number | null;
+  revealMode: RevealMode;
+  revealAt: string | null;
+  waypointGateRadiusMeters: number;
+  requireSequentialWaypoints: boolean;
+}
+
+export interface QuizWalkQuestion {
+  id: string;
+  order: number;
+  questionType: QuestionType;
+  text: string;
+  choices: QuestionChoice[];
+  pointsIfCorrect: number;
+  config: QuestionConfig;
+}
+
+export interface QuizWalkWaypoint {
+  id: string;
+  order: number;
+  title: string;
+  lat: number;
+  lng: number;
+  questions: QuizWalkQuestion[];
+}
+
+export interface QuizWalk {
+  quizId: string;
+  title: string;
+  waypoints: QuizWalkWaypoint[];
 }
 
 export interface Waypoint {
@@ -55,9 +98,11 @@ export interface QuestionChoice {
 
 export interface WaypointQuestion {
   id: string;
+  questionType: QuestionType;
   text: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
+  config: QuestionConfig;
 }
 
 export interface FirstPlayable {

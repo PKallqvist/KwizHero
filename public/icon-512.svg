@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="KwizHero icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#16a085"/>
+      <stop offset="100%" stop-color="#0f6b5f"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bg)"/>
+  <path d="M256 100l120 54v82c0 110-77 177-120 200-43-23-120-90-120-200v-82l120-54z" fill="#e9fff9" opacity="0.95"/>
+  <circle cx="256" cy="241" r="49" fill="#0f6b5f"/>
+  <path d="M252 271l28 25 60-61" fill="none" stroke="#e9fff9" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

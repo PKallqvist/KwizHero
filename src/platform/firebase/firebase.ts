@@ -1,6 +1,7 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getFunctions } from "firebase/functions";
+import { initializeApp, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+import { getFunctions, type Functions } from "firebase/functions";
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -9,7 +10,38 @@ const config = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(config);
+const missingKeys = Object.entries(config)
+  .filter(([, value]) => typeof value !== "string" || value.trim().length === 0)
+  .map(([key]) => key);
 
-export const db = getFirestore(app);
-export const functions = getFunctions(app);
+export const firebaseConfigError =
+  missingKeys.length > 0
+    ? `Missing Firebase environment values: ${missingKeys.join(", ")}`
+    : null;
+
+interface FirebaseServices {
+  app: FirebaseApp;
+  auth: Auth;
+  db: Firestore;
+  functions: Functions;
+}
+
+let services: FirebaseServices | null = null;
+
+export function getFirebaseServices(): FirebaseServices {
+  if (firebaseConfigError) {
+    throw new Error(firebaseConfigError);
+  }
+
+  if (!services) {
+    const app = initializeApp(config);
+    services = {
+      app,
+      auth: getAuth(app),
+      db: getFirestore(app),
+      functions: getFunctions(app),
+    };
+  }
+
+  return services;
+}

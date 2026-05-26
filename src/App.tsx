@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { Link, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ActionIcon,
@@ -26,6 +26,11 @@ const PlayQuizPage = lazy(async () => {
   return { default: module.PlayQuizPage };
 });
 
+const LandingPage = lazy(async () => {
+  const module = await import("./app/landing/LandingPage");
+  return { default: module.LandingPage };
+});
+
 export function App(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -37,11 +42,14 @@ export function App(): JSX.Element {
           <Group justify="space-between" align="center" wrap="wrap">
             <Group>
               <Title order={3}>KwizHero</Title>
+              <Anchor component={Link} to="/">
+                {t("nav.home")}
+              </Anchor>
               <Anchor component={Link} to="/create">
-                {t("navCreator")}
+                {t("nav.creator")}
               </Anchor>
               <Anchor component={Link} to="/play/demo">
-                {t("navPlay")}
+                {t("nav.play")}
               </Anchor>
             </Group>
             <Group>
@@ -64,7 +72,7 @@ export function App(): JSX.Element {
           </Group>
           <Suspense fallback={<Group justify="center"><Loader /><Text>Loading…</Text></Group>}>
             <Routes>
-              <Route path="/" element={<Navigate to="/create" replace />} />
+              <Route path="/" element={<LandingPage />} />
               <Route path="/create" element={<CreateQuizPage />} />
               <Route path="/play/:quizId" element={<PlayQuizPage />} />
             </Routes>
