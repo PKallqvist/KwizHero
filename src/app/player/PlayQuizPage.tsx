@@ -19,7 +19,6 @@ import {
   Card,
   Checkbox,
   Group,
-  Image,
   NumberInput,
   Paper,
   Select,
@@ -28,6 +27,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import {
   IconAlertCircle,
   IconClock,
@@ -177,6 +177,7 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
 export function PlayQuizPage(): JSX.Element {
   const { t } = useTranslation();
   const { quizId = "" } = useParams();
+  const isMobileViewport = useMediaQuery("(max-width: 48em)");
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugMode = searchParams.get("debug") === "1";
 
@@ -862,7 +863,8 @@ export function PlayQuizPage(): JSX.Element {
         ) : null}
 
         {cardMode && currentQuestion && quizWalk && lockedWaypointIndex !== null ? (
-          <Card withBorder radius="md" p="sm" className="kwiz-player-fill-card-hidden">
+          <div className="kwiz-player-phone-shell">
+            <Card withBorder radius="md" p="sm" className="kwiz-player-fill-card-hidden kwiz-player-phone-card">
             <Stack gap="sm" align="stretch" className="kwiz-player-fill-stack">
               <Text fw={700}>
                 {t("player.atWaypoint", { nickname: nickname || t("player.locationYou"), waypoint: quizWalk.waypoints[lockedWaypointIndex].title })}
@@ -915,18 +917,13 @@ export function PlayQuizPage(): JSX.Element {
                         </div>
                       ) : null}
 
-                      <Stack gap="sm" align="center" justify="center" className="kwiz-card-back-content">
-                        <Image
-                          src="/branding/card-backside.png"
-                          alt="KwizHero"
-                          h={64}
-                          w="100%"
-                          className="kwiz-card-back-logo"
-                          fit="contain"
-                        />
-                        <Text fw={700}>{t("player.cardBackTitle")}</Text>
-                        <Text c="dimmed">{t("player.cardBackHint")}</Text>
-                        {effectiveQuestionTimerSeconds !== null ? (
+                      <Stack gap="sm" align="center" justify="center" className={`kwiz-card-back-content${isMobileViewport ? " kwiz-card-back-content-mobile" : ""}`}>
+                        <div className="kwiz-card-back-art-shell">
+                          <img src="/branding/card-backside.png" alt="KwizHero" className="kwiz-card-back-art" />
+                        </div>
+                        {!isMobileViewport ? <Text fw={700}>{t("player.cardBackTitle")}</Text> : null}
+                        {!isMobileViewport ? <Text c="dimmed">{t("player.cardBackHint")}</Text> : null}
+                        {effectiveQuestionTimerSeconds !== null && !isMobileViewport ? (
                           <Alert color="orange" variant="light" w="100%">
                             {t("player.questionTimedNotice", { seconds: effectiveQuestionTimerSeconds })}
                           </Alert>
@@ -956,7 +953,8 @@ export function PlayQuizPage(): JSX.Element {
                 </Stack>
               </div>
             </Stack>
-          </Card>
+            </Card>
+          </div>
         ) : null}
 
         {sessionComplete ? (

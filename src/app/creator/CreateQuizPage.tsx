@@ -43,6 +43,8 @@ type WizardStep = 1 | 2 | 3 | 4 | 5;
 type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 type RoutePreviewMode = RouteMode;
 
+const PREVIEW_PRE_REVEAL_SECONDS = 3;
+
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
 function previewChoiceCardStyle(index: number): CSSProperties {
@@ -492,7 +494,9 @@ export function CreateQuizPage(): JSX.Element {
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
   const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
+  const [questionPreviewActive, setQuestionPreviewActive] = useState(false);
   const [previewPhase, setPreviewPhase] = useState<CreatorPreviewPhase>("front");
+  const [previewCountdown, setPreviewCountdown] = useState<number | null>(null);
   const [dragQuestionIndex, setDragQuestionIndex] = useState<number | null>(null);
   const [dragOverQuestionIndex, setDragOverQuestionIndex] = useState<number | null>(null);
   const [moveMode, setMoveMode] = useState(false);
@@ -1084,6 +1088,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function onPreviewPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    if (questionPreviewActive) return;
     if (previewEditing) return;
     const start = previewSwipeStartRef.current;
     previewSwipeStartRef.current = null;
@@ -1233,6 +1238,8 @@ export function CreateQuizPage(): JSX.Element {
     (step === 4 && hasQuestionData) ||
     step === 5;
   const canPublishCurrentQuiz = Boolean(result?.editKey) && editingQuizStatus !== "published";
+  const effectivePreviewTimerSeconds =
+    currentQuestion?.config.timerSeconds ?? input.ruleset.questionTimeLimitSeconds ?? null;
 
   const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
@@ -1273,6 +1280,98 @@ export function CreateQuizPage(): JSX.Element {
       },
     });
   }
+
+  function enterQuestionPreview(): void {
+    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setPreviewEditing(false);
+    setQuestionPreviewActive(true);
+    setPreviewPhase("back");
+    setPreviewCountdown(null);
+  }
+
+  function exitQuestionPreview(): void {
+    setQuestionPreviewActive(false);
+    setPreviewPhase("front");
+    setPreviewCountdown(null);
+  }
+
+  function revealPreviewCard(): void {
+    if (!questionPreviewActive) return;
+    if (previewPhase === "pre_countdown") return;
+    if (effectivePreviewTimerSeconds !== null) {
+      setPreviewPhase("pre_countdown");
+      setPreviewCountdown(PREVIEW_PRE_REVEAL_SECONDS);
+      return;
+    }
+    setPreviewPhase("front");
+  }
+
+  function renderQuestionPreviewInput(): JSX.Element {
+    if (!currentQuestion) return <></>;
+
+    if (currentQuestion.questionType === "numeric") {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("player.numericAnswer")}</Text>
+        </Paper>
+      );
+    }
+
+    if (currentQuestion.questionType === "letter_order") {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("player.letterOrderAnswer")}</Text>
+        </Paper>
+      );
+    }
+
+    if (currentQuestion.choices.length === 0) {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("creator.questions.addChoice")}</Text>
+        </Paper>
+      );
+    }
+
+    return (
+      <Stack gap="xs">
+        {currentQuestion.choices.map((choice, index) => (
+          <Group key={`preview-sim-choice-${index}`} wrap="nowrap" align="flex-start">
+            <div className="kwiz-preview-choice-dot" aria-hidden="true" />
+            <Text>{choice}</Text>
+          </Group>
+        ))}
+      </Stack>
+    );
+  }
+
+  useEffect(() => {
+    if (!questionPreviewActive) return;
+    setPreviewPhase("back");
+    setPreviewCountdown(null);
+  }, [questionPreviewActive, selectedWaypointIndex, selectedQuestionIndex]);
+
+  useEffect(() => {
+    if (previewPhase !== "pre_countdown" || previewCountdown === null) return;
+
+    if (previewCountdown <= 0) {
+      setPreviewPhase("front");
+      setPreviewCountdown(null);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setPreviewCountdown((previous) => (previous === null ? null : previous - 1));
+    }, 1000);
+
+    return () => clearTimeout(timeout);
+  }, [previewCountdown, previewPhase]);
+
+  useEffect(() => {
+    if (step !== 4 && questionPreviewActive) {
+      exitQuestionPreview();
+    }
+  }, [questionPreviewActive, step]);
 
   const routeLegs = useMemo(() => {
     if (input.waypoints.length < 2) return [];
@@ -1814,6 +1913,21 @@ export function CreateQuizPage(): JSX.Element {
                         </Text>
                         <Group gap={6} wrap="nowrap" align="center">
                           <Text size="xs" c="dimmed">{t("creator.questions.reorderShort")}</Text>
+                          {questionPreviewActive ? (
+                            <Button size="compact-xs" variant="light" color="gray" onClick={exitQuestionPreview}>
+                              {t("creator.questions.previewExit")}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              color="teal"
+                              onClick={enterQuestionPreview}
+                              disabled={!currentQuestion}
+                            >
+                              {t("creator.questions.previewStart")}
+                            </Button>
+                          )}
                           <ActionIcon
                             variant="subtle"
                             color="teal"
@@ -1904,30 +2018,53 @@ export function CreateQuizPage(): JSX.Element {
                         >
                           <div ref={previewEditorRef}>
                             <Stack gap="sm">
-                              {previewPhase === "back" || previewPhase === "pre_countdown" ? (
-                                <Paper className="kwiz-card-back" withBorder radius="md" p="md">
+                              {questionPreviewActive && (previewPhase === "back" || previewPhase === "pre_countdown") ? (
+                                <Paper
+                                  className="kwiz-card-back kwiz-card-back-clickable kwiz-card-back-min"
+                                  withBorder
+                                  radius="md"
+                                  p="md"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={revealPreviewCard}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter" && event.key !== " ") return;
+                                    event.preventDefault();
+                                    revealPreviewCard();
+                                  }}
+                                >
                                   {previewPhase === "pre_countdown" ? (
                                     <div className="kwiz-countdown-overlay" aria-live="polite">
                                       <Text size="xs" c="dimmed">{t("creator.questions.previewCountdownHint")}</Text>
-                                      <Title order={2} className="kwiz-countdown-number">3</Title>
+                                      <Title order={2} className="kwiz-countdown-number">{previewCountdown ?? 0}</Title>
                                     </div>
                                   ) : null}
-                                  <Stack align="center" gap="xs">
-                                    <Image
-                                      src="/branding/card-backside.png"
-                                      alt="KwizHero"
-                                      h={62}
-                                      w="100%"
-                                      className="kwiz-creator-preview-logo"
-                                      fit="contain"
-                                    />
-                                    <Text fw={700} size="lg">{t("creator.questions.previewQuestionCardTitle")}</Text>
-                                    <Text c="dimmed">{t("creator.questions.previewQuestionCardHint")}</Text>
+                                  <Stack align="stretch" justify="center" className="kwiz-card-back-content kwiz-card-back-content-mobile" gap="md">
+                                    <div className="kwiz-card-back-art-shell">
+                                      <img src="/branding/card-backside.png" alt="KwizHero" className="kwiz-card-back-art" />
+                                    </div>
                                   </Stack>
                                 </Paper>
                               ) : null}
 
-                              {previewPhase === "front" ? (
+                              {questionPreviewActive && previewPhase === "front" ? (
+                                <div className="kwiz-reveal-enter">
+                                  <Stack gap="sm">
+                                    <Title order={5}>{currentQuestion?.text || t("creator.questions.labelText")}</Title>
+                                    {effectivePreviewTimerSeconds !== null ? (
+                                      <Badge color="orange" leftSection={<IconClock size={14} />}>
+                                        {`${effectivePreviewTimerSeconds}s`}
+                                      </Badge>
+                                    ) : null}
+                                    {renderQuestionPreviewInput()}
+                                    <Group>
+                                      <Button disabled>{t("player.submitAnswer")}</Button>
+                                    </Group>
+                                  </Stack>
+                                </div>
+                              ) : null}
+
+                              {!questionPreviewActive ? (
                                 <>
                                   <Textarea
                                     autosize
