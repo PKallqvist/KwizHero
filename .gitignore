@@ -8,3 +8,4 @@ dist/
 functions/lib/
 *.tsbuildinfo
 .github-protection.json
+.features/
