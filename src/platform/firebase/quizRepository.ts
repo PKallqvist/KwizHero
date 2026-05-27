@@ -17,7 +17,6 @@ import {
   where,
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
-import { httpsCallable } from "firebase/functions";
 import { getFirebaseServices } from "./firebase";
 import type {
   AnswerResult,
@@ -314,6 +313,15 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
   const { db } = getFirebaseServices();
   await assertQuizOwnership(quizId);
 
+  const quizDoc = await getDoc(doc(db, "quizzes", quizId));
+  if (!quizDoc.exists()) {
+    throw new Error("Quiz not found");
+  }
+  const status = (quizDoc.data() as { status?: "draft" | "published" }).status ?? "draft";
+  if (status !== "draft") {
+    throw new Error("Published quizzes cannot be edited as drafts");
+  }
+
   await updateDoc(doc(db, "quizzes", quizId), {
     title: input.title,
     description: input.description,
@@ -401,9 +409,27 @@ export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promi
 }
 
 export async function publishQuiz(quizId: string, editKey: string): Promise<void> {
-  const { functions } = getFirebaseServices();
-  const callPublish = httpsCallable(functions, "publishQuizCallable");
-  await callPublish({ quizId, editKey });
+  const { db } = getFirebaseServices();
+  await assertQuizOwnership(quizId);
+
+  const quizDoc = await getDoc(doc(db, "quizzes", quizId));
+  if (!quizDoc.exists()) {
+    throw new Error("Quiz not found");
+  }
+
+  const data = quizDoc.data() as { status?: "draft" | "published" };
+  if ((data.status ?? "draft") === "published") {
+    return;
+  }
+
+  // Publish directly from the client for the authenticated creator.
+  // The edit key is still retained in-session for the creator UI, but Spark-plan
+  // projects cannot deploy the callable function path that used to handle publish.
+  await updateDoc(doc(db, "quizzes", quizId), {
+    status: "published",
+    publishedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function getQuizSummary(quizId: string): Promise<QuizSummary | null> {

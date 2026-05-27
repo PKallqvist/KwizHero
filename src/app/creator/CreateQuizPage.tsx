@@ -34,6 +34,7 @@ import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
+import { formatDistanceMeters, routeDistanceMeters as calculateRouteDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
 
 const now = new Date();
@@ -336,6 +337,15 @@ function getReadableError(error: unknown): string {
   if (firebaseError.code === "permission-denied") {
     return "Firestore denied the write. Deploy firestore.rules to your Firebase project and refresh.";
   }
+  if (firebaseError.code === "functions/internal" || firebaseError.code === "internal") {
+    return "Publish function failed internally. Deploy Cloud Functions (npx firebase-tools deploy --only functions) and try again.";
+  }
+  if (firebaseError.code === "functions/not-found" || firebaseError.code === "not-found") {
+    return "Publish function was not found. Deploy Cloud Functions (npx firebase-tools deploy --only functions).";
+  }
+  if (firebaseError.code === "functions/unavailable" || firebaseError.code === "unavailable") {
+    return "Publish function is unavailable. Check Firebase Functions deployment and retry.";
+  }
   return firebaseError.message ?? "Something went wrong.";
 }
 
@@ -392,6 +402,7 @@ export function CreateQuizPage(): JSX.Element {
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState(0);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [result, setResult] = useState<{ quizId: string; editKey: string } | null>(null);
+  const [editingQuizStatus, setEditingQuizStatus] = useState<"draft" | "published" | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(firebaseConfigError);
   const [loadingEditableQuiz, setLoadingEditableQuiz] = useState(false);
@@ -416,6 +427,8 @@ export function CreateQuizPage(): JSX.Element {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
+  const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
+  const focusWaypointNameAfterAddRef = useRef(false);
   const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
@@ -449,6 +462,11 @@ export function CreateQuizPage(): JSX.Element {
       try {
         const editable = await getEditableQuizDraft(editingQuizId);
         if (!mounted) return;
+        setEditingQuizStatus(editable.status);
+        if (editable.status === "published") {
+          setError(t("creator.publish.editNotAllowedPublished"));
+          return;
+        }
         setInput(editable.input);
         setSelectedWaypointIndex(0);
         setSelectedQuestionIndex(0);
@@ -618,6 +636,7 @@ export function CreateQuizPage(): JSX.Element {
   function addWaypointAt(lat?: number, lng?: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
     setCoordinatesOverlayOpen(false);
+    focusWaypointNameAfterAddRef.current = true;
     let nextWaypointIndex = 0;
     setInput((prev) => {
       nextWaypointIndex = prev.waypoints.length;
@@ -799,6 +818,10 @@ export function CreateQuizPage(): JSX.Element {
     setSavingDraft(true);
     try {
       if (isEditingExistingQuiz) {
+        if (editingQuizStatus === "published") {
+          setError(t("creator.publish.editNotAllowedPublished"));
+          return;
+        }
         await updateQuizDraft(editingQuizId, input);
         setResult((previous) => ({
           quizId: editingQuizId,
@@ -968,6 +991,15 @@ export function CreateQuizPage(): JSX.Element {
     setFocusedQuestionIndex(null);
   }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
 
+  useEffect(() => {
+    if (!currentWaypoint || !focusWaypointNameAfterAddRef.current) return;
+    focusWaypointNameAfterAddRef.current = false;
+    requestAnimationFrame(() => {
+      waypointNameInputRef.current?.focus();
+      waypointNameInputRef.current?.select();
+    });
+  }, [currentWaypoint, selectedWaypointIndex]);
+
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
   function isQuestionValid(question: DraftQuestionInput): boolean {
@@ -1009,7 +1041,7 @@ export function CreateQuizPage(): JSX.Element {
     step === 2 ||
     (step === 3 && hasWaypointData && hasQuestionData) ||
     step === 4;
-  const canPublishCurrentQuiz = Boolean(result?.editKey);
+  const canPublishCurrentQuiz = Boolean(result?.editKey) && editingQuizStatus !== "published";
 
   const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
@@ -1018,6 +1050,10 @@ export function CreateQuizPage(): JSX.Element {
     : isTwoColumnRouteLayout
       ? "kwiz-map-picker-two-col"
       : "kwiz-map-picker-single-col";
+  const routeDistance = useMemo(
+    () => calculateRouteDistanceMeters(input.waypoints.map((waypoint) => ({ lat: waypoint.lat, lng: waypoint.lng }))),
+    [input.waypoints]
+  );
 
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
@@ -1030,6 +1066,9 @@ export function CreateQuizPage(): JSX.Element {
             <Stack gap={4}>
               <Text size="sm" fw={600}>{t("creator.publish.editingBannerTitle")}</Text>
               <Text size="sm">{t("creator.publish.editingBannerBody", { quizId: editingQuizId })}</Text>
+              {editingQuizStatus === "published" ? (
+                <Text size="sm" c="red">{t("creator.publish.editNotAllowedPublished")}</Text>
+              ) : null}
               <Group>
                 <Button component={Link} to="/my-quizzes" variant="subtle" size="xs">
                   {t("creator.publish.backToMyQuizzes")}
@@ -1247,6 +1286,12 @@ export function CreateQuizPage(): JSX.Element {
               <Badge>{t("creator.route.waypointCount", { count: input.waypoints.length })}</Badge>
             </Group>
 
+            {routeDistance > 0 ? (
+              <Text size="sm" c="dimmed">
+                {t("creator.route.routeDistance", { distance: formatDistanceMeters(routeDistance) })}
+              </Text>
+            ) : null}
+
           <SimpleGrid cols={coordinatesOverlayOpen ? { base: 1, lg: 1 } : { base: 1, lg: 2 }} spacing="md">
             <Stack gap="md">
 
@@ -1257,6 +1302,7 @@ export function CreateQuizPage(): JSX.Element {
                       <TextInput
                         label={t("creator.route.labelName")}
                         className="kwiz-creator-flex-1"
+                        ref={waypointNameInputRef}
                         value={currentWaypoint.name}
                         onChange={(e) => updateCurrentWaypoint({ ...currentWaypoint, name: e.currentTarget.value })}
                       />
@@ -1459,18 +1505,6 @@ export function CreateQuizPage(): JSX.Element {
                         </Group>
                       </Group>
 
-                      {currentQuestionIssue ? (
-                        <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`This card needs setup: ${currentQuestionIssue}.`}</Text>
-                        </Alert>
-                      ) : null}
-
-                      {!currentQuestionIssue && questionIssues.length > 0 ? (
-                        <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`${questionIssues.length} card(s) still need setup before Next is enabled.`}</Text>
-                        </Alert>
-                      ) : null}
-
                       {isMobilePreviewLayout ? (
                         <Group justify="center" gap="xs" wrap="nowrap" className="kwiz-creator-mobile-swipe-hint">
                           <ActionIcon
@@ -1527,7 +1561,7 @@ export function CreateQuizPage(): JSX.Element {
                                   ) : null}
                                   <Stack align="center" gap="xs">
                                     <Image
-                                      src="/branding/kwizherologo.png"
+                                      src="/branding/card-backside.png"
                                       alt="KwizHero"
                                       h={62}
                                       w="100%"
@@ -1718,6 +1752,18 @@ export function CreateQuizPage(): JSX.Element {
                           </Button>
                         ) : null}
                       </Group>
+
+                      {currentQuestionIssue ? (
+                        <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
+                          <Text size="sm">{`This card needs setup: ${currentQuestionIssue}.`}</Text>
+                        </Alert>
+                      ) : null}
+
+                      {!currentQuestionIssue && questionIssues.length > 0 ? (
+                        <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
+                          <Text size="sm">{`${questionIssues.length} card(s) still need setup before Next is enabled.`}</Text>
+                        </Alert>
+                      ) : null}
                     </Stack>
                   </Card>
 

@@ -111,6 +111,7 @@ export function UserQuizzesPage(): JSX.Element {
     return quizzes.map((quiz) => {
       const shareLink = buildPlayShareLink(quiz.id);
       const copied = clipboard.copied && lastCopiedQuizId === quiz.id;
+      const canEdit = quiz.status === "draft";
 
       return (
         <Card key={quiz.id} withBorder radius="md" p="md">
@@ -133,7 +134,7 @@ export function UserQuizzesPage(): JSX.Element {
               <Button component={Link} to="/create" variant="default" size="xs">
                 {t("userQuizzes.createNew")}
               </Button>
-              <Button component={Link} to={`/create?quizId=${quiz.id}`} variant="light" size="xs">
+              <Button component={Link} to={`/create?quizId=${quiz.id}`} variant="light" size="xs" disabled={!canEdit}>
                 {t("userQuizzes.editQuiz")}
               </Button>
               <Button
@@ -159,6 +160,9 @@ export function UserQuizzesPage(): JSX.Element {
                 {t("userQuizzes.openPlay")}
               </Anchor>
             </Group>
+            {!canEdit ? (
+              <Text size="xs" c="dimmed">{t("userQuizzes.editLockedPublished")}</Text>
+            ) : null}
           </Stack>
         </Card>
       );

@@ -44,7 +44,7 @@ import {
   startSession,
   submitFirstAnswer,
 } from "../../platform/firebase/quizRepository";
-import { distanceMeters, getCurrentCoordinates } from "../../platform/map/geolocation";
+import { distanceMeters, formatDistanceMeters, getCurrentCoordinates, routeDistanceMeters } from "../../platform/map/geolocation";
 import { resolveRevealPhase } from "../../domain/reveal";
 import type { AnswerResult, QuizSummary, QuizWalk, QuizWalkQuestion, QuizWalkWaypoint } from "../../domain/types";
 import type { Coordinates } from "../../platform/map/geolocation";
@@ -197,6 +197,7 @@ export function PlayQuizPage(): JSX.Element {
   const [distanceToWaypoint, setDistanceToWaypoint] = useState<number | null>(null);
   const [playerCoordinates, setPlayerCoordinates] = useState<Coordinates | null>(null);
   const [locationRefreshing, setLocationRefreshing] = useState(false);
+  const [mockGpsWalkEnabled, setMockGpsWalkEnabled] = useState(false);
   const [cardPhase, setCardPhase] = useState<QuestionCardPhase>("back");
   const [preRevealCountdown, setPreRevealCountdown] = useState<number | null>(null);
 
@@ -251,6 +252,16 @@ export function PlayQuizPage(): JSX.Element {
     lockedWaypointIndex !== null
       ? quizWalk?.waypoints[lockedWaypointIndex]?.questions[activeQuestionIndex] ?? null
       : null;
+
+  const totalRouteDistance = useMemo(
+    () => routeDistanceMeters((quizWalk?.waypoints ?? []).map((waypoint) => ({ lat: waypoint.lat, lng: waypoint.lng }))),
+    [quizWalk]
+  );
+
+  const nextTargetDistance = useMemo(() => {
+    if (!currentWaypoint || !playerCoordinates) return null;
+    return distanceMeters(playerCoordinates, { lat: currentWaypoint.lat, lng: currentWaypoint.lng });
+  }, [currentWaypoint, playerCoordinates]);
 
   const effectiveQuestionTimerSeconds = useMemo(() => {
     if (!currentQuestion || !summary) return null;
@@ -437,11 +448,22 @@ export function PlayQuizPage(): JSX.Element {
     setQuestionDeadlineMs(null);
     setPreRevealCountdown(null);
     setAnsweredQuestionIds([]);
+    setMockGpsWalkEnabled(false);
     setDebugBarDismissed(false);
   }
 
+  function setMockLocationToWaypoint(waypointIndex: number): void {
+    if (!quizWalk) return;
+    const waypoint = quizWalk.waypoints[waypointIndex];
+    if (!waypoint) return;
+
+    setPlayerCoordinates({ lat: waypoint.lat, lng: waypoint.lng });
+    setDistanceToWaypoint(0);
+    setError(null);
+  }
+
   async function refreshCurrentLocation(): Promise<void> {
-    if (debugMode || !currentWaypoint || sessionComplete) return;
+    if (debugMode || mockGpsWalkEnabled || !currentWaypoint || sessionComplete) return;
     setLocationRefreshing(true);
     setError(null);
 
@@ -461,7 +483,7 @@ export function PlayQuizPage(): JSX.Element {
   }
 
   useEffect(() => {
-    if (debugMode || !currentWaypoint || sessionComplete) return;
+    if (debugMode || mockGpsWalkEnabled || !currentWaypoint || sessionComplete) return;
     if (!("geolocation" in navigator)) return;
 
     const watchId = navigator.geolocation.watchPosition(
@@ -488,7 +510,13 @@ export function PlayQuizPage(): JSX.Element {
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [currentWaypoint, debugMode, sessionComplete]);
+  }, [currentWaypoint, debugMode, mockGpsWalkEnabled, sessionComplete]);
+
+  useEffect(() => {
+    if (!mockGpsWalkEnabled || !quizWalk || sessionComplete) return;
+    if (lockedWaypointIndex !== null) return;
+    setMockLocationToWaypoint(activeWaypointIndex);
+  }, [activeWaypointIndex, lockedWaypointIndex, mockGpsWalkEnabled, quizWalk, sessionComplete]);
 
   function getGateRadiusMeters(): number {
     return summary?.waypointGateRadiusMeters ?? 40;
@@ -684,9 +712,31 @@ export function PlayQuizPage(): JSX.Element {
 
         {showDebugBar ? (
         <Alert color={debugMode ? "blue" : "gray"} variant="light">
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Text size="sm">{debugMode ? t("player.debugMode") : t("player.debugToolsHint")}</Text>
-            <Group gap="xs" wrap="nowrap">
+          <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+            <Stack gap={2}>
+              <Text size="sm">{debugMode ? t("player.debugMode") : t("player.debugToolsHint")}</Text>
+              {showGameplay && mockGpsWalkEnabled ? (
+                <Text size="xs" c="dimmed">{t("player.mockGpsWalkActive")}</Text>
+              ) : null}
+            </Stack>
+            <Group gap="xs" wrap="wrap">
+              {showGameplay ? (
+                <Button
+                  size="xs"
+                  variant={mockGpsWalkEnabled ? "filled" : "light"}
+                  color={mockGpsWalkEnabled ? "orange" : "gray"}
+                  onClick={() => {
+                    if (!mockGpsWalkEnabled) {
+                      setMockGpsWalkEnabled(true);
+                      setMockLocationToWaypoint(activeWaypointIndex);
+                      return;
+                    }
+                    setMockGpsWalkEnabled(false);
+                  }}
+                >
+                  {mockGpsWalkEnabled ? t("player.disableMockGpsWalk") : t("player.enableMockGpsWalk")}
+                </Button>
+              ) : null}
               <Button
                 size="xs"
                 variant="light"
@@ -739,12 +789,18 @@ export function PlayQuizPage(): JSX.Element {
           <Card withBorder radius="md" p="sm" className="kwiz-player-fill-card">
             <Stack gap="sm" className="kwiz-player-fill-stack">
               <Text fw={700}>{t("player.journeyTowards", { nickname: nickname || t("player.locationYou") })}</Text>
+              <Text size="sm" c="dimmed">
+                {t("player.routeDistance", { distance: formatDistanceMeters(totalRouteDistance) })}
+              </Text>
               <Title order={4}>
                 {t("player.journeyWaypointDistance", {
                   waypoint: currentWaypoint.title,
                   meters: Math.max(0, Math.round(distanceToWaypoint ?? 0)),
                 })}
               </Title>
+              <Text size="sm" c="dimmed">
+                {t("player.nextTargetDistance", { distance: formatDistanceMeters(nextTargetDistance ?? 0) })}
+              </Text>
 
               <div className="kwiz-player-fill-pane">
                 <JourneyMap
@@ -766,7 +822,13 @@ export function PlayQuizPage(): JSX.Element {
                       })
                     : t("player.locationCurrentUnknown")}
                 </Text>
-                <Button size="xs" variant="light" onClick={refreshCurrentLocation} loading={locationRefreshing}>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={refreshCurrentLocation}
+                  loading={locationRefreshing}
+                  disabled={mockGpsWalkEnabled}
+                >
                   {t("player.locationRefresh")}
                 </Button>
               </Group>
@@ -821,7 +883,7 @@ export function PlayQuizPage(): JSX.Element {
 
                       <Stack gap="sm" align="center" justify="center" className="kwiz-card-back-content">
                         <Image
-                          src="/branding/kwizherologo.png"
+                          src="/branding/card-backside.png"
                           alt="KwizHero"
                           h={64}
                           w="100%"
