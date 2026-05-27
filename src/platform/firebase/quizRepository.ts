@@ -70,6 +70,24 @@ function toIsoOrNull(value: unknown): string | null {
   return null;
 }
 
+function normalizeRouteLegCoordinates(value: unknown): Array<Array<{ lat: number; lng: number }>> {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((leg) => {
+    if (!Array.isArray(leg)) return [];
+    return leg
+      .map((point) => {
+        if (!point || typeof point !== "object") return null;
+        const lat = (point as { lat?: unknown }).lat;
+        const lng = (point as { lng?: unknown }).lng;
+        if (typeof lat !== "number" || typeof lng !== "number") return null;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+        return { lat, lng };
+      })
+      .filter((point): point is { lat: number; lng: number } => point !== null);
+  });
+}
+
 export function buildPlayShareLink(quizId: string): string {
   return `${window.location.origin}/play/${quizId}`;
 }
@@ -221,6 +239,7 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
     routeLegModes: input.ruleset.routeLegModes,
+    routeLegCoordinates: input.ruleset.routeLegCoordinates,
     questionOrderMode: input.ruleset.questionOrderMode,
     scoringStrategy: input.ruleset.scoringStrategy,
     winnerPolicy: "highest_score",
@@ -259,6 +278,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
     requireSequentialWaypoints?: boolean;
     routeMode?: RouteMode;
     routeLegModes?: RouteMode[];
+    routeLegCoordinates?: unknown;
     questionOrderMode?: QuestionOrderMode;
     scoringStrategy?: "binary_correct_1_point";
   };
@@ -313,6 +333,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
         requireSequentialWaypoints: rulesData.requireSequentialWaypoints ?? true,
         routeMode: rulesData.routeMode ?? "crow",
         routeLegModes: rulesData.routeLegModes ?? [],
+        routeLegCoordinates: normalizeRouteLegCoordinates(rulesData.routeLegCoordinates),
         questionOrderMode: rulesData.questionOrderMode ?? "fixed",
         scoringStrategy: rulesData.scoringStrategy ?? "binary_correct_1_point",
       },
@@ -353,6 +374,7 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
     routeLegModes: input.ruleset.routeLegModes,
+    routeLegCoordinates: input.ruleset.routeLegCoordinates,
     questionOrderMode: input.ruleset.questionOrderMode,
     scoringStrategy: input.ruleset.scoringStrategy,
     winnerPolicy: "highest_score",

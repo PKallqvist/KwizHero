@@ -19,6 +19,7 @@ export interface Ruleset {
   requireSequentialWaypoints: boolean;
   routeMode: RouteMode;
   routeLegModes: RouteMode[];
+  routeLegCoordinates: Array<Array<{ lat: number; lng: number }>>;
   questionOrderMode: QuestionOrderMode;
   scoringStrategy: "binary_correct_1_point";
 }

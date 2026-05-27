@@ -33,7 +33,7 @@ import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
-import { distanceMeters, formatDistanceMeters } from "../../platform/map/geolocation";
+import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
 
 const now = new Date();
@@ -51,16 +51,37 @@ function previewChoiceCardStyle(index: number): CSSProperties {
   } as CSSProperties;
 }
 
+function buildAnchoredManualLegPoints(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+  storedPoints: Array<{ lat: number; lng: number }>
+): Array<{ lat: number; lng: number }> {
+  if (storedPoints.length === 0) {
+    return [from, to];
+  }
+  if (storedPoints.length === 1) {
+    return [from, storedPoints[0], to];
+  }
+
+  // Stored paths currently include historical endpoints; keep interior points
+  // and always re-anchor to the latest waypoint coordinates.
+  return [from, ...storedPoints.slice(1, -1), to];
+}
+
 interface WaypointPickerProps {
   waypoints: DraftWaypointInput[];
   selectedWaypointIndex: number;
   radius: number;
   orderedRoute: boolean;
   legModes: RoutePreviewMode[];
+  legCoordinates: Array<Array<{ lat: number; lng: number }>>;
+  drawingLegIndex: number | null;
+  drawingLegPoints: Array<{ lat: number; lng: number }>;
   mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
   onChange: (lat: number, lng: number) => void;
+  onDrawPointAdd: (lat: number, lng: number) => void;
 }
 
 interface WaypointOverviewMapProps {
@@ -76,6 +97,10 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
   function ClickCapture(): null {
     useMapEvents({
       click(event) {
+        if (props.drawingLegIndex !== null) {
+          props.onDrawPointAdd(event.latlng.lat, event.latlng.lng);
+          return;
+        }
         props.onChange(event.latlng.lat, event.latlng.lng);
       },
     });
@@ -103,6 +128,29 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
             if (!next) return null;
             const legMode = props.legModes[index] ?? "crow";
             if (legMode === "none") return null;
+            const savedManualPath = legMode === "manual" ? props.legCoordinates[index] ?? [] : [];
+            const drawPreviewPath =
+              props.drawingLegIndex === index
+                ? [
+                    { lat: waypoint.lat, lng: waypoint.lng },
+                    ...props.drawingLegPoints,
+                    { lat: next.lat, lng: next.lng },
+                  ]
+                : [];
+            const anchoredManualPath = buildAnchoredManualLegPoints(
+              { lat: waypoint.lat, lng: waypoint.lng },
+              { lat: next.lat, lng: next.lng },
+              savedManualPath
+            );
+            const legPathPoints =
+              drawPreviewPath.length >= 2
+                ? drawPreviewPath
+                : savedManualPath.length >= 2
+                  ? anchoredManualPath
+                  : [
+                      { lat: waypoint.lat, lng: waypoint.lng },
+                      { lat: next.lat, lng: next.lng },
+                    ];
             const legPathOptions =
               legMode === "urban"
                 ? { color: "#2f9e44", weight: 3, opacity: 0.8 }
@@ -114,10 +162,7 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
             return (
               <Polyline
                 key={`route-segment-${index}`}
-                positions={[
-                  [waypoint.lat, waypoint.lng] as [number, number],
-                  [next.lat, next.lng] as [number, number],
-                ]}
+                positions={legPathPoints.map((point) => [point.lat, point.lng] as [number, number])}
                 pathOptions={legPathOptions}
               />
             );
@@ -430,6 +475,7 @@ export function CreateQuizPage(): JSX.Element {
       requireSequentialWaypoints: true,
       routeMode: "crow",
       routeLegModes: [],
+      routeLegCoordinates: [],
       questionOrderMode: "fixed",
       scoringStrategy: "binary_correct_1_point",
     },
@@ -457,6 +503,9 @@ export function CreateQuizPage(): JSX.Element {
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
+  const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
+  const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [manualDrawError, setManualDrawError] = useState<string | null>(null);
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -670,6 +719,9 @@ export function CreateQuizPage(): JSX.Element {
 
   function addWaypointAt(lat?: number, lng?: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
     focusWaypointNameAfterAddRef.current = true;
     let nextWaypointIndex = 0;
@@ -706,6 +758,9 @@ export function CreateQuizPage(): JSX.Element {
   function removeCurrentWaypoint(): void {
     if (input.waypoints.length <= 1) return;
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
     const nextWaypoints = input.waypoints.filter((_, i) => i !== selectedWaypointIndex);
     setInput((prev) => ({ ...prev, waypoints: nextWaypoints }));
@@ -958,9 +1013,65 @@ export function CreateQuizPage(): JSX.Element {
 
   function selectWaypoint(index: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
     setSelectedWaypointIndex(index);
     setSelectedQuestionIndex(0);
+  }
+
+  function beginManualLegDrawing(legIndex: number): void {
+    setCoordinatesOverlayOpen(false);
+    setDrawingLegIndex(legIndex);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
+  }
+
+  function cancelManualLegDrawing(): void {
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
+  }
+
+  function undoManualLegPoint(): void {
+    setDrawingLegPoints((previous) => previous.slice(0, -1));
+    setManualDrawError(null);
+  }
+
+  function addManualLegPoint(lat: number, lng: number): void {
+    if (drawingLegIndex === null) return;
+    setDrawingLegPoints((previous) => [...previous, { lat, lng }]);
+    setManualDrawError(null);
+  }
+
+  function finishManualLegDrawing(): void {
+    if (drawingLegIndex === null) return;
+    const fromWaypoint = input.waypoints[drawingLegIndex];
+    const toWaypoint = input.waypoints[drawingLegIndex + 1];
+    if (!fromWaypoint || !toWaypoint) {
+      cancelManualLegDrawing();
+      return;
+    }
+    if (drawingLegPoints.length === 0) {
+      setManualDrawError(t("creator.route.manualDrawRequiresPoint"));
+      return;
+    }
+
+    const nextLegCoordinates = [...input.ruleset.routeLegCoordinates];
+    nextLegCoordinates[drawingLegIndex] = [
+      { lat: fromWaypoint.lat, lng: fromWaypoint.lng },
+      ...drawingLegPoints,
+      { lat: toWaypoint.lat, lng: toWaypoint.lng },
+    ];
+    setInput({
+      ...input,
+      ruleset: {
+        ...input.ruleset,
+        routeLegCoordinates: nextLegCoordinates,
+      },
+    });
+    cancelManualLegDrawing();
   }
 
   function selectQuestion(index: number): void {
@@ -1035,6 +1146,50 @@ export function CreateQuizPage(): JSX.Element {
     });
   }, [currentWaypoint, selectedWaypointIndex]);
 
+  useEffect(() => {
+    if (drawingLegIndex === null) return;
+    if (step !== 3 || drawingLegIndex >= input.waypoints.length - 1) {
+      cancelManualLegDrawing();
+    }
+  }, [drawingLegIndex, input.waypoints.length, step]);
+
+  useEffect(() => {
+    if (drawingLegIndex === null || step !== 3) return;
+
+    function onKeyDown(event: KeyboardEvent): void {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isTypingInField =
+        Boolean(target?.isContentEditable) ||
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select";
+      if (isTypingInField) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelManualLegDrawing();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finishManualLegDrawing();
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        undoManualLegPoint();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [drawingLegIndex, step, drawingLegPoints.length, input.waypoints.length]);
+
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
   function isQuestionValid(question: DraftQuestionInput): boolean {
@@ -1102,11 +1257,19 @@ export function CreateQuizPage(): JSX.Element {
   function setLegRouteMode(legIndex: number, mode: RoutePreviewMode): void {
     const nextLegModes = [...input.ruleset.routeLegModes];
     nextLegModes[legIndex] = mode;
+    const nextLegCoordinates = [...input.ruleset.routeLegCoordinates];
+    if (mode !== "manual") {
+      nextLegCoordinates[legIndex] = [];
+      if (drawingLegIndex === legIndex) {
+        cancelManualLegDrawing();
+      }
+    }
     setInput({
       ...input,
       ruleset: {
         ...input.ruleset,
         routeLegModes: nextLegModes,
+        routeLegCoordinates: nextLegCoordinates,
       },
     });
   }
@@ -1125,10 +1288,19 @@ export function CreateQuizPage(): JSX.Element {
     return input.waypoints.slice(0, -1).map((waypoint, index) => {
       const next = input.waypoints[index + 1];
       const mode = getLegRouteMode(index);
-      const meters = distanceMeters(
+      const manualLegPoints = input.ruleset.routeLegCoordinates[index] ?? [];
+      const anchoredManualLegPoints = buildAnchoredManualLegPoints(
         { lat: waypoint.lat, lng: waypoint.lng },
-        { lat: next.lat, lng: next.lng }
+        { lat: next.lat, lng: next.lng },
+        manualLegPoints
       );
+      const meters =
+        mode === "manual" && manualLegPoints.length >= 2
+          ? routeDistanceMeters(anchoredManualLegPoints)
+          : distanceMeters(
+              { lat: waypoint.lat, lng: waypoint.lng },
+              { lat: next.lat, lng: next.lng }
+            );
       const effectiveMeters = mode === "none" ? 0 : meters;
       const estimatedSeconds = Math.round(effectiveMeters / speedMetersPerSecondByMode[mode]);
 
@@ -1140,12 +1312,11 @@ export function CreateQuizPage(): JSX.Element {
         estimatedSeconds,
       };
     });
-  }, [defaultRouteMode, input.waypoints, input.ruleset.routeLegModes]);
+  }, [defaultRouteMode, input.waypoints, input.ruleset.routeLegModes, input.ruleset.routeLegCoordinates]);
   const routeDistance = useMemo(
     () => routeLegs.reduce((sum, leg) => sum + leg.meters, 0),
     [routeLegs]
   );
-  const hasManualRouteLeg = routeLegs.some((leg) => leg.mode === "manual");
   const routeTotalEstimatedSeconds = useMemo(
     () => routeLegs.reduce((sum, leg) => sum + leg.estimatedSeconds, 0),
     [routeLegs]
@@ -1545,10 +1716,14 @@ export function CreateQuizPage(): JSX.Element {
                       radius={input.ruleset.waypointGateRadiusMeters}
                       orderedRoute={input.ruleset.requireSequentialWaypoints && routeLegs.some((leg) => leg.mode !== "none")}
                       legModes={routeLegs.map((leg) => leg.mode)}
+                      legCoordinates={input.ruleset.routeLegCoordinates}
+                      drawingLegIndex={drawingLegIndex}
+                      drawingLegPoints={drawingLegPoints}
                       mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
                       onViewportChange={setRouteMapViewport}
                       onChange={handleRouteMapClick}
+                      onDrawPointAdd={addManualLegPoint}
                     />
                   </Stack>
                 </Card>
@@ -2166,7 +2341,12 @@ export function CreateQuizPage(): JSX.Element {
                 {routeLegs.length > 0 ? (
                   <Stack gap={6}>
                     {routeLegs.map((leg, index) => (
-                      <Stack key={`route-leg-preview-${index}`} gap={4}>
+                      <Stack
+                        key={`route-leg-preview-${index}`}
+                        gap={4}
+                        p={drawingLegIndex === index ? "xs" : 0}
+                        style={drawingLegIndex === index ? { border: "1px solid var(--mantine-color-teal-4)", borderRadius: "8px" } : undefined}
+                      >
                         <Group justify="space-between" align="center" wrap="nowrap">
                           <Text size="sm">{t("creator.route.routeLegLabel", { from: leg.fromIndex + 1, to: leg.toIndex + 1 })}</Text>
                           <Text size="xs" c="dimmed">
@@ -2184,6 +2364,32 @@ export function CreateQuizPage(): JSX.Element {
                           value={leg.mode}
                           onChange={(value) => setLegRouteMode(index, (value ?? defaultRouteMode) as RoutePreviewMode)}
                         />
+                        {leg.mode === "manual" ? (
+                          <Group gap="xs">
+                            {drawingLegIndex === index ? (
+                              <>
+                                <Button size="xs" variant="filled" onClick={finishManualLegDrawing}>
+                                  {t("creator.route.manualDrawDone")}
+                                </Button>
+                                <Button size="xs" variant="light" onClick={undoManualLegPoint} disabled={drawingLegPoints.length === 0}>
+                                  {t("creator.route.manualDrawUndo")}
+                                </Button>
+                                <Button size="xs" variant="default" onClick={cancelManualLegDrawing}>
+                                  {t("creator.route.manualDrawCancel")}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button size="xs" variant="light" onClick={() => beginManualLegDrawing(index)}>
+                                {t("creator.route.manualDrawEdit")}
+                              </Button>
+                            )}
+                          </Group>
+                        ) : null}
+                        {drawingLegIndex === index ? (
+                          <Text size="xs" c="dimmed">
+                            {t("creator.route.manualDrawActiveHint", { points: drawingLegPoints.length })}
+                          </Text>
+                        ) : null}
                       </Stack>
                     ))}
                     <Group justify="space-between" align="center" mt={4}>
@@ -2195,9 +2401,9 @@ export function CreateQuizPage(): JSX.Element {
                         })}
                       </Text>
                     </Group>
-                    {hasManualRouteLeg ? (
+                    {manualDrawError ? (
                       <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
-                        <Text size="sm">{t("creator.route.routeModeManualHint")}</Text>
+                        <Text size="sm">{manualDrawError}</Text>
                       </Alert>
                     ) : null}
                   </Stack>
