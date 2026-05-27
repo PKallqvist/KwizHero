@@ -704,6 +704,31 @@ export function PlayQuizPage(): JSX.Element {
     lockedWaypointIndex !== null ? quizWalk?.waypoints[lockedWaypointIndex]?.questions.length ?? 0 : 0;
   const currentQuestionGlobal =
     lockedWaypointIndex !== null ? getGlobalQuestionNumber(lockedWaypointIndex, activeQuestionIndex) : 0;
+  const anyOrderQuestionsEnabled = summary?.questionOrderMode === "any";
+  const unansweredQuestionOptions = useMemo(() => {
+    if (!quizWalk || lockedWaypointIndex === null) return [];
+    return quizWalk.waypoints[lockedWaypointIndex].questions
+      .map((question, index) => ({ question, index }))
+      .filter(({ question }) => !answeredQuestionIds.includes(question.id))
+      .map(({ question, index }) => ({
+        value: String(index),
+        label: `${index + 1}. ${question.text.slice(0, 42) || t("player.debugQuestion")}`,
+      }));
+  }, [answeredQuestionIds, lockedWaypointIndex, quizWalk, t]);
+
+  useEffect(() => {
+    if (!anyOrderQuestionsEnabled || !quizWalk || lockedWaypointIndex === null) return;
+    const waypoint = quizWalk.waypoints[lockedWaypointIndex];
+    if (!waypoint) return;
+
+    const activeQuestion = waypoint.questions[activeQuestionIndex];
+    if (activeQuestion && !answeredQuestionIds.includes(activeQuestion.id)) return;
+
+    const firstUnanswered = waypoint.questions.findIndex((question) => !answeredQuestionIds.includes(question.id));
+    if (firstUnanswered >= 0) {
+      setActiveQuestionIndex(firstUnanswered);
+    }
+  }, [activeQuestionIndex, anyOrderQuestionsEnabled, answeredQuestionIds, lockedWaypointIndex, quizWalk]);
 
   return (
     <Paper withBorder shadow="sm" radius="md" p="lg">
@@ -851,6 +876,15 @@ export function PlayQuizPage(): JSX.Element {
                     totalInWaypoint: currentWaypointQuestionCount,
                   })}
                 </Text>
+              ) : null}
+
+              {anyOrderQuestionsEnabled && unansweredQuestionOptions.length > 1 ? (
+                <Select
+                  label={t("player.questionPicker")}
+                  value={String(activeQuestionIndex)}
+                  data={unansweredQuestionOptions}
+                  onChange={(value) => setActiveQuestionIndex(Number(value ?? String(activeQuestionIndex)))}
+                />
               ) : null}
 
               <div className="kwiz-player-fill-pane-hidden">

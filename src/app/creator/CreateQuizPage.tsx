@@ -25,7 +25,6 @@ import {
   TextInput,
   Textarea,
   Switch,
-  Radio,
   Title,
   VisuallyHidden,
 } from "@mantine/core";
@@ -34,14 +33,15 @@ import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
-import { formatDistanceMeters, routeDistanceMeters as calculateRouteDistanceMeters } from "../../platform/map/geolocation";
-import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
+import { distanceMeters, formatDistanceMeters } from "../../platform/map/geolocation";
+import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
 
 const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-type WizardStep = 1 | 2 | 3 | 4;
+type WizardStep = 1 | 2 | 3 | 4 | 5;
 type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
+type RoutePreviewMode = RouteMode;
 
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
@@ -56,6 +56,7 @@ interface WaypointPickerProps {
   selectedWaypointIndex: number;
   radius: number;
   orderedRoute: boolean;
+  legModes: RoutePreviewMode[];
   mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
@@ -97,21 +98,52 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
       <TrackMapViewport onViewportChange={props.onViewportChange} />
       {props.orderedRoute && props.waypoints.length > 1 ? (
         <>
-          <Polyline
-            positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
-            pathOptions={{ color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 }}
-          />
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
             const next = props.waypoints[index + 1];
             if (!next) return null;
+            const legMode = props.legModes[index] ?? "crow";
+            if (legMode === "none") return null;
+            const legPathOptions =
+              legMode === "urban"
+                ? { color: "#2f9e44", weight: 3, opacity: 0.8 }
+                : legMode === "hiking"
+                  ? { color: "#f08c00", weight: 3, opacity: 0.8, dashArray: "7 5" }
+                  : legMode === "manual"
+                    ? { color: "#c92a2a", weight: 3, opacity: 0.8, dashArray: "10 6" }
+                    : { color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 };
+            return (
+              <Polyline
+                key={`route-segment-${index}`}
+                positions={[
+                  [waypoint.lat, waypoint.lng] as [number, number],
+                  [next.lat, next.lng] as [number, number],
+                ]}
+                pathOptions={legPathOptions}
+              />
+            );
+          })}
+          {props.waypoints.slice(0, -1).map((waypoint, index) => {
+            const next = props.waypoints[index + 1];
+            if (!next) return null;
+            const legMode = props.legModes[index] ?? "crow";
+            if (legMode === "none") return null;
+            const legColor =
+              legMode === "urban"
+                ? "#2f9e44"
+                : legMode === "hiking"
+                  ? "#f08c00"
+                  : legMode === "manual"
+                    ? "#c92a2a"
+                    : kwizTokens.map.routePath;
+            const legMarker = legMode === "urban" ? "U" : legMode === "hiking" ? "H" : legMode === "manual" ? "M" : "➜";
             return (
               <CircleMarker
                 key={`route-arrow-${index}`}
                 center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
                 radius={2}
-                pathOptions={{ color: kwizTokens.map.routePath, fillColor: kwizTokens.map.routePath, fillOpacity: 0 }}
+                pathOptions={{ color: legColor, fillColor: legColor, fillOpacity: 0 }}
               >
-                <LeafletTooltip permanent direction="center" offset={[0, 0]}>➜</LeafletTooltip>
+                <LeafletTooltip permanent direction="center" offset={[0, 0]}>{legMarker}</LeafletTooltip>
               </CircleMarker>
             );
           })}
@@ -396,6 +428,9 @@ export function CreateQuizPage(): JSX.Element {
       revealAt: plusDays.toISOString(),
       waypointGateRadiusMeters: 40,
       requireSequentialWaypoints: true,
+      routeMode: "crow",
+      routeLegModes: [],
+      questionOrderMode: "fixed",
       scoringStrategy: "binary_correct_1_point",
     },
   });
@@ -1039,8 +1074,9 @@ export function CreateQuizPage(): JSX.Element {
   const canGoNext =
     (step === 1 && input.title.trim().length > 2) ||
     step === 2 ||
-    (step === 3 && hasWaypointData && hasQuestionData) ||
-    step === 4;
+    (step === 3 && hasWaypointData) ||
+    (step === 4 && hasQuestionData) ||
+    step === 5;
   const canPublishCurrentQuiz = Boolean(result?.editKey) && editingQuizStatus !== "published";
 
   const routeMapHeightClassName = coordinatesOverlayOpen
@@ -1050,9 +1086,69 @@ export function CreateQuizPage(): JSX.Element {
     : isTwoColumnRouteLayout
       ? "kwiz-map-picker-two-col"
       : "kwiz-map-picker-single-col";
+  const defaultRouteMode = input.ruleset.routeMode ?? "crow";
+  const routeModeOptions: Array<{ value: RoutePreviewMode; label: string }> = [
+    { value: "none", label: t("creator.route.routeModeNone") },
+    { value: "crow", label: t("creator.route.routeModeCrow") },
+    { value: "urban", label: t("creator.route.routeModeUrban") },
+    { value: "hiking", label: t("creator.route.routeModeHiking") },
+    { value: "manual", label: t("creator.route.routeModeManual") },
+  ];
+
+  function getLegRouteMode(legIndex: number): RoutePreviewMode {
+    return input.ruleset.routeLegModes[legIndex] ?? defaultRouteMode;
+  }
+
+  function setLegRouteMode(legIndex: number, mode: RoutePreviewMode): void {
+    const nextLegModes = [...input.ruleset.routeLegModes];
+    nextLegModes[legIndex] = mode;
+    setInput({
+      ...input,
+      ruleset: {
+        ...input.ruleset,
+        routeLegModes: nextLegModes,
+      },
+    });
+  }
+
+  const routeLegs = useMemo(() => {
+    if (input.waypoints.length < 2) return [];
+
+    const speedMetersPerSecondByMode: Record<RoutePreviewMode, number> = {
+      none: 1,
+      crow: 1.35,
+      urban: 1.25,
+      hiking: 1.05,
+      manual: 1.2,
+    };
+
+    return input.waypoints.slice(0, -1).map((waypoint, index) => {
+      const next = input.waypoints[index + 1];
+      const mode = getLegRouteMode(index);
+      const meters = distanceMeters(
+        { lat: waypoint.lat, lng: waypoint.lng },
+        { lat: next.lat, lng: next.lng }
+      );
+      const effectiveMeters = mode === "none" ? 0 : meters;
+      const estimatedSeconds = Math.round(effectiveMeters / speedMetersPerSecondByMode[mode]);
+
+      return {
+        fromIndex: index,
+        toIndex: index + 1,
+        mode,
+        meters: effectiveMeters,
+        estimatedSeconds,
+      };
+    });
+  }, [defaultRouteMode, input.waypoints, input.ruleset.routeLegModes]);
   const routeDistance = useMemo(
-    () => calculateRouteDistanceMeters(input.waypoints.map((waypoint) => ({ lat: waypoint.lat, lng: waypoint.lng }))),
-    [input.waypoints]
+    () => routeLegs.reduce((sum, leg) => sum + leg.meters, 0),
+    [routeLegs]
+  );
+  const hasManualRouteLeg = routeLegs.some((leg) => leg.mode === "manual");
+  const routeTotalEstimatedSeconds = useMemo(
+    () => routeLegs.reduce((sum, leg) => sum + leg.estimatedSeconds, 0),
+    [routeLegs]
   );
 
   return (
@@ -1060,7 +1156,7 @@ export function CreateQuizPage(): JSX.Element {
       <Stack gap="md">
         <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
-        <Text c="dimmed">{t("creator.step", { current: step, total: 4 })}</Text>
+        <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}</Text>
         {isEditingExistingQuiz ? (
           <Alert icon={<IconAlertCircle size={16} />} color="blue" variant="light">
             <Stack gap={4}>
@@ -1081,7 +1177,8 @@ export function CreateQuizPage(): JSX.Element {
         <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
           <Stepper.Step label={t("creator.steps.identity")} />
           <Stepper.Step label={t("creator.steps.rules")} />
-          <Stepper.Step label={t("creator.steps.routeAndQuestions")} />
+          <Stepper.Step label={t("creator.steps.route")} />
+          <Stepper.Step label={t("creator.steps.questions")} />
           <Stepper.Step label={t("creator.steps.publish")} />
         </Stepper>
 
@@ -1176,6 +1273,37 @@ export function CreateQuizPage(): JSX.Element {
                   })
                 }
               />
+              <Select
+                label={t("creator.rules.labelDefaultRouteMode")}
+                data={routeModeOptions}
+                value={defaultRouteMode}
+                onChange={(value) =>
+                  setInput({
+                    ...input,
+                    ruleset: {
+                      ...input.ruleset,
+                      routeMode: (value ?? "crow") as RouteMode,
+                    },
+                  })
+                }
+              />
+              <Select
+                label={t("creator.rules.labelQuestionOrderMode")}
+                data={[
+                  { value: "fixed", label: t("creator.rules.questionOrderFixed") },
+                  { value: "any", label: t("creator.rules.questionOrderAny") },
+                ]}
+                value={input.ruleset.questionOrderMode}
+                onChange={(value) =>
+                  setInput({
+                    ...input,
+                    ruleset: {
+                      ...input.ruleset,
+                      questionOrderMode: (value ?? "fixed") as QuestionOrderMode,
+                    },
+                  })
+                }
+              />
             </SimpleGrid>
 
             <Card withBorder radius="md">
@@ -1250,7 +1378,7 @@ export function CreateQuizPage(): JSX.Element {
           </Stack>
         ) : null}
 
-        {step === 3 ? (
+        {step === 3 || step === 4 ? (
           <Stack gap="md">
             <Group
               justify="space-between"
@@ -1286,13 +1414,14 @@ export function CreateQuizPage(): JSX.Element {
               <Badge>{t("creator.route.waypointCount", { count: input.waypoints.length })}</Badge>
             </Group>
 
-            {routeDistance > 0 ? (
+            {step === 3 && routeDistance > 0 ? (
               <Text size="sm" c="dimmed">
                 {t("creator.route.routeDistance", { distance: formatDistanceMeters(routeDistance) })}
               </Text>
             ) : null}
 
           <SimpleGrid cols={coordinatesOverlayOpen ? { base: 1, lg: 1 } : { base: 1, lg: 2 }} spacing="md">
+            {step === 3 ? (
             <Stack gap="md">
 
               {currentWaypoint ? (
@@ -1414,7 +1543,8 @@ export function CreateQuizPage(): JSX.Element {
                       waypoints={input.waypoints}
                       selectedWaypointIndex={selectedWaypointIndex}
                       radius={input.ruleset.waypointGateRadiusMeters}
-                      orderedRoute={input.ruleset.requireSequentialWaypoints}
+                      orderedRoute={input.ruleset.requireSequentialWaypoints && routeLegs.some((leg) => leg.mode !== "none")}
+                      legModes={routeLegs.map((leg) => leg.mode)}
                       mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
                       onViewportChange={setRouteMapViewport}
@@ -1424,7 +1554,55 @@ export function CreateQuizPage(): JSX.Element {
                 </Card>
               ) : null}
             </Stack>
+            ) : (
+            <Card withBorder radius="md" p="sm">
+              <Stack gap="sm">
+                {currentWaypoint ? (
+                  <>
+                    <Group justify="space-between" align="center" wrap="nowrap">
+                      <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
+                      <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
+                        {t("creator.questions.addCard")}
+                      </Button>
+                    </Group>
 
+                    {currentWaypoint.questions.length === 0 ? (
+                      <Card withBorder radius="md" p="md">
+                        <Stack align="center" gap="xs">
+                          <Text size="sm" c="dimmed">This waypoint has no cards yet.</Text>
+                          <Button leftSection={<IconPlus size={16} />} onClick={addQuestionToCurrentWaypoint}>
+                            {t("creator.questions.addCard")}
+                          </Button>
+                        </Stack>
+                      </Card>
+                    ) : (
+                      <Stack gap="xs">
+                        {currentWaypoint.questions.map((question, index) => {
+                          const isActive = selectedQuestionIndex === index;
+                          const valid = isQuestionValid(question);
+                          return (
+                            <Button
+                              key={`question-list-item-${index}`}
+                              variant={isActive ? "filled" : "light"}
+                              color={valid ? "teal" : "orange"}
+                              justify="space-between"
+                              onClick={() => selectQuestion(index)}
+                            >
+                              {`Q${getQuestionGlobalNumber(index)} ${question.text.trim().length > 0 ? `- ${question.text.slice(0, 38)}` : `- ${t("creator.questions.untitledQuestion")}`}`}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    )}
+                  </>
+                ) : (
+                  <Text size="sm" c="dimmed">Select a waypoint to manage questions.</Text>
+                )}
+              </Stack>
+            </Card>
+            )}
+
+            {step === 4 ? (
             <Stack gap="md">
               {currentWaypoint ? (
                 <Stack gap="sm">
@@ -1980,11 +2158,60 @@ export function CreateQuizPage(): JSX.Element {
                 </>
               ) : null}
             </Stack>
+            ) : (
+            <Card withBorder radius="md" p="sm">
+              <Stack gap="xs">
+                <Text size="sm" fw={600}>{t("creator.route.routeLegsTitle")}</Text>
+
+                {routeLegs.length > 0 ? (
+                  <Stack gap={6}>
+                    {routeLegs.map((leg, index) => (
+                      <Stack key={`route-leg-preview-${index}`} gap={4}>
+                        <Group justify="space-between" align="center" wrap="nowrap">
+                          <Text size="sm">{t("creator.route.routeLegLabel", { from: leg.fromIndex + 1, to: leg.toIndex + 1 })}</Text>
+                          <Text size="xs" c="dimmed">
+                            {leg.mode === "none"
+                              ? t("creator.route.routeLegHidden")
+                              : t("creator.route.routeLegDistanceTime", {
+                                  distance: formatDistanceMeters(leg.meters),
+                                  minutes: Math.max(1, Math.round(leg.estimatedSeconds / 60)),
+                                })}
+                          </Text>
+                        </Group>
+                        <Select
+                          size="xs"
+                          data={routeModeOptions}
+                          value={leg.mode}
+                          onChange={(value) => setLegRouteMode(index, (value ?? defaultRouteMode) as RoutePreviewMode)}
+                        />
+                      </Stack>
+                    ))}
+                    <Group justify="space-between" align="center" mt={4}>
+                      <Text size="sm" fw={600}>{t("creator.route.routeLegsTotal")}</Text>
+                      <Text size="sm" fw={600}>
+                        {t("creator.route.routeLegDistanceTime", {
+                          distance: formatDistanceMeters(routeDistance),
+                          minutes: Math.max(1, Math.round(routeTotalEstimatedSeconds / 60)),
+                        })}
+                      </Text>
+                    </Group>
+                    {hasManualRouteLeg ? (
+                      <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
+                        <Text size="sm">{t("creator.route.routeModeManualHint")}</Text>
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                ) : (
+                  <Text size="sm" c="dimmed">{t("creator.route.routeLegsEmptyHint")}</Text>
+                )}
+              </Stack>
+            </Card>
+            )}
           </SimpleGrid>
           </Stack>
         ) : null}
 
-        {step === 4 ? (
+        {step === 5 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
             <Card withBorder radius="md">
               <Title order={4}>{t("creator.publish.reviewHeading")}</Title>
@@ -2058,7 +2285,7 @@ export function CreateQuizPage(): JSX.Element {
           <Button variant="default" onClick={previousStep} disabled={step === 1}>
             {t("common.back")}
           </Button>
-          <Button onClick={nextStep} disabled={step === 4 || !canGoNext}>
+          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
             {t("common.next")}
           </Button>
         </Group>

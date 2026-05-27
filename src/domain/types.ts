@@ -1,5 +1,7 @@
 export type RevealMode = "instant" | "on_completion" | "scheduled";
 export type QuestionType = "multiple_choice" | "numeric" | "letter_order";
+export type RouteMode = "none" | "crow" | "urban" | "hiking" | "manual";
+export type QuestionOrderMode = "fixed" | "any";
 
 export interface QuestionConfig {
   timerSeconds: number | null;
@@ -15,6 +17,9 @@ export interface Ruleset {
   revealAt: string | null;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
+  routeMode: RouteMode;
+  routeLegModes: RouteMode[];
+  questionOrderMode: QuestionOrderMode;
   scoringStrategy: "binary_correct_1_point";
 }
 
@@ -56,6 +61,8 @@ export interface QuizSummary {
   revealAt: string | null;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
+  routeMode: RouteMode;
+  questionOrderMode: QuestionOrderMode;
 }
 
 export interface QuizListItem {

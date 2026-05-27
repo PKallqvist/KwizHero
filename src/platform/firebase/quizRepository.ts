@@ -22,8 +22,10 @@ import type {
   AnswerResult,
   FirstPlayable,
   LeaderboardEntry,
+  QuestionOrderMode,
   QuizDraftInput,
   QuizListItem,
+  RouteMode,
   QuizSummary,
   QuizWalk,
   QuestionType,
@@ -217,6 +219,9 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     revealAt: input.ruleset.revealAt,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
+    routeMode: input.ruleset.routeMode,
+    routeLegModes: input.ruleset.routeLegModes,
+    questionOrderMode: input.ruleset.questionOrderMode,
     scoringStrategy: input.ruleset.scoringStrategy,
     winnerPolicy: "highest_score",
     updatedAt: serverTimestamp(),
@@ -252,6 +257,9 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
     revealAt?: string | null;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
+    routeMode?: RouteMode;
+    routeLegModes?: RouteMode[];
+    questionOrderMode?: QuestionOrderMode;
     scoringStrategy?: "binary_correct_1_point";
   };
 
@@ -303,6 +311,9 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
         revealAt: rulesData.revealAt ?? null,
         waypointGateRadiusMeters: rulesData.waypointGateRadiusMeters ?? 40,
         requireSequentialWaypoints: rulesData.requireSequentialWaypoints ?? true,
+        routeMode: rulesData.routeMode ?? "crow",
+        routeLegModes: rulesData.routeLegModes ?? [],
+        questionOrderMode: rulesData.questionOrderMode ?? "fixed",
         scoringStrategy: rulesData.scoringStrategy ?? "binary_correct_1_point",
       },
     },
@@ -340,6 +351,9 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     revealAt: input.ruleset.revealAt,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
+    routeMode: input.ruleset.routeMode,
+    routeLegModes: input.ruleset.routeLegModes,
+    questionOrderMode: input.ruleset.questionOrderMode,
     scoringStrategy: input.ruleset.scoringStrategy,
     winnerPolicy: "highest_score",
     updatedAt: serverTimestamp(),
@@ -454,6 +468,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     revealAt: string | null;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
+    routeMode?: RouteMode;
+    questionOrderMode?: QuestionOrderMode;
   };
 
   return {
@@ -469,6 +485,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     revealAt: r.revealAt ?? null,
     waypointGateRadiusMeters: r.waypointGateRadiusMeters ?? 40,
     requireSequentialWaypoints: r.requireSequentialWaypoints ?? true,
+    routeMode: r.routeMode ?? "crow",
+    questionOrderMode: r.questionOrderMode ?? "fixed",
   };
 }
 
