@@ -150,7 +150,7 @@ export function PlayerProfilePage(): JSX.Element {
   const tieredBadges = useMemo(() => badges.filter((badge) => badge.type === "tiered"), [badges]);
   const discoveryBadges = useMemo(() => badges.filter((badge) => badge.type === "discovery"), [badges]);
   const tieredDefinitions = useMemo(
-    () => BADGE_CATALOG.filter((badge): badge is TieredBadgeConfig => badge.type === "tiered"),
+    () => BADGE_CATALOG.filter((badge) => badge.type === "tiered") as TieredBadgeConfig[],
     []
   );
 

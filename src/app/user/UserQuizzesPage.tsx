@@ -7,7 +7,6 @@ import {
   Anchor,
   Badge,
   Button,
-  Card,
   Group,
   Loader,
   Modal,
@@ -113,7 +112,7 @@ export function UserQuizzesPage(): JSX.Element {
       const canEdit = quiz.status === "draft";
 
       return (
-        <Card key={quiz.id} withBorder radius="md" p="md">
+        <div key={quiz.id} className="kwiz-myquiz-item">
           <Stack gap="sm">
             <Group justify="space-between" align="start" wrap="wrap">
               <Stack gap={2}>
@@ -163,7 +162,7 @@ export function UserQuizzesPage(): JSX.Element {
               <Text size="xs" c="dimmed">{t("userQuizzes.editLockedPublished")}</Text>
             ) : null}
           </Stack>
-        </Card>
+        </div>
       );
     });
   }, [clipboard, lastCopiedQuizId, quizzes, t]);
@@ -185,16 +184,16 @@ export function UserQuizzesPage(): JSX.Element {
       ) : null}
 
       {!loadingQuizzes && quizzes.length === 0 ? (
-        <Card withBorder radius="md" p="xl">
+        <div className="kwiz-myquiz-empty">
           <Stack align="center" gap="xs">
             <Text fw={600}>{t("userQuizzes.emptyTitle")}</Text>
             <Text size="sm" c="dimmed">{t("userQuizzes.emptyHint")}</Text>
             <Button component={Link} to="/create" variant="light">{t("userQuizzes.createFirst")}</Button>
           </Stack>
-        </Card>
+        </div>
       ) : null}
 
-      {rows}
+      <Stack className="kwiz-myquiz-list">{rows}</Stack>
 
       <Modal
         opened={Boolean(leaderboardQuiz)}

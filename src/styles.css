@@ -92,11 +92,10 @@ body {
 
 .kwiz-profile-root {
   width: 100%;
-  --kwiz-profile-gutter: 16px;
 }
 
 .kwiz-profile-content {
-  padding: 0 var(--kwiz-profile-gutter) var(--kwiz-profile-gutter);
+  padding: 0;
 }
 
 .kwiz-profile-hero-panel {
@@ -297,8 +296,8 @@ body {
   display: flex;
   gap: 16px;
   overflow-x: auto;
-  margin-inline: calc(var(--kwiz-profile-gutter) * -1);
-  padding: 8px var(--kwiz-profile-gutter) 14px;
+  margin-inline: 0;
+  padding: 8px 0 14px;
   scrollbar-width: none;
   scroll-snap-type: x mandatory;
 }
@@ -494,10 +493,21 @@ body {
   }
 }
 
-@media (max-width: 48em) {
-  .kwiz-profile-root {
-    --kwiz-profile-gutter: 12px;
-  }
+.kwiz-myquiz-list {
+  gap: 0;
+}
+
+.kwiz-myquiz-item {
+  padding: 14px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.kwiz-myquiz-item:first-child {
+  border-top: 0;
+}
+
+.kwiz-myquiz-empty {
+  padding: 20px 0;
 }
 
 .kwiz-card-back-min {
@@ -1988,9 +1998,9 @@ body {
 
 .kwiz-standard-layout {
   flex: 1;
-  max-width: 1200px;
+  max-width: none;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
   padding:
     max(16px, env(safe-area-inset-top, 0px))
     max(16px, env(safe-area-inset-right, 0px))
@@ -1999,22 +2009,8 @@ body {
   position: relative;
 }
 
-.kwiz-standard-layout::before {
-  content: "";
-  position: absolute;
-  inset: 4px 8px auto;
-  height: 260px;
-  border-radius: 18px;
-  pointer-events: none;
-  background:
-    linear-gradient(120deg, rgba(60, 126, 221, 0.18), rgba(31, 168, 132, 0.08)),
-    radial-gradient(70% 110% at 10% 0%, rgba(125, 183, 255, 0.18), transparent 70%);
-  z-index: 0;
-}
-
-.kwiz-standard-layout > * {
-  position: relative;
-  z-index: 1;
+.kwiz-create-root {
+  padding: 16px;
 }
 
 .kwiz-play-layout {
@@ -2364,11 +2360,11 @@ body {
 .kwiz-walk-shell {
   background: #0f1b2d;
   border: 0;
-  border-radius: 22px;
-  padding: 16px;
+  border-radius: 0;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .kwiz-next-waypoint-card {
@@ -2408,20 +2404,20 @@ body {
 }
 
 .kwiz-walk-map-shell {
-  margin: 0 16px;
+  margin: 0;
 }
 
 .kwiz-walk-map-shell .kwiz-map-container {
   border-radius: 14px;
   border: 1px solid #1d3355;
-  height: 240px;
+  height: clamp(240px, calc(100vw - 32px), 480px);
   overflow: hidden;
 }
 
 .kwiz-walk-stats-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 8px;
 }
 
 .kwiz-walk-stat-card {
@@ -2436,16 +2432,16 @@ body {
   align-items: center;
   gap: 6px;
   color: #7a9bc0;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .kwiz-walk-stat-value {
   color: #ffffff;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .kwiz-walk-route-list {
@@ -2464,9 +2460,9 @@ body {
 
 .kwiz-route-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 10px 0;
+  padding: 6px 0;
   border-top: 1px solid #1d3355;
 }
 
@@ -2475,16 +2471,17 @@ body {
 }
 
 .kwiz-route-dot {
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: #1c3a5a;
   color: #7a9bc0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .kwiz-route-dot.is-completed {
@@ -2504,7 +2501,7 @@ body {
 
 .kwiz-route-row-title {
   color: #7a9bc0;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -2515,7 +2512,7 @@ body {
 
 .kwiz-route-row-subtitle {
   color: #7a9bc0;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .kwiz-walk-refresh-button {

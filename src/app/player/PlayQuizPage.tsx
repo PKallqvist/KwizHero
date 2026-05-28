@@ -125,10 +125,29 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
       <FitJourneyBounds waypoints={props.waypoints} current={props.current} />
 
       {props.orderedRoute && props.waypoints.length > 1 ? (
-        <Polyline
-          positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
-          pathOptions={{ color: "#1D4ED8", weight: 2.5, opacity: 0.95 }}
-        />
+        <>
+          {props.waypoints.slice(0, -1).map((waypoint, fromIndex) => {
+            const toIndex = fromIndex + 1;
+            const isCurrent = toIndex === props.targetWaypointIndex;
+            const isCompleted = !isCurrent && props.completedWaypointIndexes.has(toIndex);
+            return (
+              <Polyline
+                key={`leg-${fromIndex}-${toIndex}`}
+                positions={[
+                  [waypoint.lat, waypoint.lng],
+                  [props.waypoints[toIndex].lat, props.waypoints[toIndex].lng],
+                ] as [number, number][]}
+                pathOptions={
+                  isCompleted
+                    ? { color: "#2F6F46", weight: 2, opacity: 0.3 }
+                    : isCurrent
+                      ? { color: "#F6C453", weight: 3.5, opacity: 1, dashArray: undefined }
+                      : { color: "#1D4ED8", weight: 2, opacity: 0.45 }
+                }
+              />
+            );
+          })}
+        </>
       ) : null}
 
       {props.waypoints.map((waypoint, index) => {

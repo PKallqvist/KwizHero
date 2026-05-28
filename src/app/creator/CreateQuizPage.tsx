@@ -1426,7 +1426,7 @@ export function CreateQuizPage(): JSX.Element {
   );
 
   return (
-    <Paper withBorder shadow="sm" radius="md" p="lg">
+    <div className="kwiz-create-root">
       <Stack gap="md">
         <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
@@ -2670,6 +2670,6 @@ export function CreateQuizPage(): JSX.Element {
           </Alert>
         ) : null}
       </Stack>
-    </Paper>
+    </div>
   );
 }
