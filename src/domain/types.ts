@@ -45,6 +45,10 @@ export interface QuizDraftInput {
   title: string;
   description: string;
   locale: "en" | "sv";
+  organizerName: string | null;
+  organizerAvatarUrl: string | null;
+  organizerSwish: string | null;
+  isAnonymous: boolean;
   waypoints: DraftWaypointInput[];
   ruleset: Ruleset;
 }
@@ -54,6 +58,11 @@ export interface QuizSummary {
   title: string;
   description: string;
   status: "draft" | "published";
+  creatorUid?: string;
+  organizerName: string | null;
+  organizerAvatarUrl: string | null;
+  organizerSwish: string | null;
+  isAnonymous: boolean;
   openAt: string;
   closeAt: string;
   questionTimeLimitSeconds: number | null;
@@ -72,6 +81,7 @@ export interface QuizListItem {
   description: string;
   status: "draft" | "published";
   waypointCount: number;
+  routeDistanceKm?: number;
   createdAt: string | null;
   updatedAt: string | null;
 }

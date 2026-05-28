@@ -18,6 +18,7 @@ import {
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 import { getFirebaseServices } from "./firebase";
+import { routeDistanceMeters } from "../map/geolocation";
 import type {
   AnswerResult,
   FirstPlayable,
@@ -36,6 +37,10 @@ async function getAnonymousUid(): Promise<string> {
   if (auth.currentUser) return auth.currentUser.uid;
   const credential = await signInAnonymously(auth);
   return credential.user.uid;
+}
+
+export async function getCurrentUserUid(): Promise<string> {
+  return getAnonymousUid();
 }
 
 export interface CreatedQuiz {
@@ -214,6 +219,10 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
   const quizRef = await addDoc(collection(db, "quizzes"), {
     title: input.title,
     description: input.description,
+    organizerName: input.organizerName,
+    organizerAvatarUrl: input.organizerAvatarUrl,
+    organizerSwish: input.organizerSwish,
+    isAnonymous: input.isAnonymous,
     status: "draft",
     defaultLocale: input.locale,
     createdAt: serverTimestamp(),
@@ -264,6 +273,10 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
   const quizData = quizDoc.data() as {
     title?: string;
     description?: string;
+    organizerName?: string | null;
+    organizerAvatarUrl?: string | null;
+    organizerSwish?: string | null;
+    isAnonymous?: boolean;
     defaultLocale?: "en" | "sv";
     status?: "draft" | "published";
   };
@@ -321,6 +334,10 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
       title: quizData.title ?? "",
       description: quizData.description ?? "",
       locale: quizData.defaultLocale ?? "en",
+      organizerName: quizData.organizerName ?? null,
+      organizerAvatarUrl: quizData.organizerAvatarUrl ?? null,
+      organizerSwish: quizData.organizerSwish ?? null,
+      isAnonymous: quizData.isAnonymous ?? false,
       waypoints,
       ruleset: {
         openAt: rulesData.openAt ?? new Date().toISOString(),
@@ -357,6 +374,10 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
   await updateDoc(doc(db, "quizzes", quizId), {
     title: input.title,
     description: input.description,
+    organizerName: input.organizerName,
+    organizerAvatarUrl: input.organizerAvatarUrl,
+    organizerSwish: input.organizerSwish,
+    isAnonymous: input.isAnonymous,
     defaultLocale: input.locale,
     waypointCount: input.waypoints.length,
     updatedAt: serverTimestamp(),
@@ -390,7 +411,7 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
   const quizzesQuery = query(collection(db, "quizzes"), where("creatorUid", "==", creatorUid));
   const snapshot = await getDocs(quizzesQuery);
 
-  return snapshot.docs.map((quizDoc) => {
+  const quizzes = await Promise.all(snapshot.docs.map(async (quizDoc) => {
     const data = quizDoc.data() as {
       title?: string;
       description?: string;
@@ -400,16 +421,36 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
       updatedAt?: unknown;
     };
 
+    let routeDistanceKm = 0;
+    try {
+      const waypointSnapshot = await getDocs(
+        query(collection(db, `quizzes/${quizDoc.id}/waypoints`), orderBy("order", "asc"))
+      );
+      const points = waypointSnapshot.docs
+        .map((waypointDoc) => {
+          const waypointData = waypointDoc.data() as { lat?: number; lng?: number };
+          if (typeof waypointData.lat !== "number" || typeof waypointData.lng !== "number") return null;
+          return { lat: waypointData.lat, lng: waypointData.lng };
+        })
+        .filter((point): point is { lat: number; lng: number } => point !== null);
+      routeDistanceKm = routeDistanceMeters(points) / 1000;
+    } catch {
+      routeDistanceKm = 0;
+    }
+
     return {
       id: quizDoc.id,
       title: data.title ?? "Untitled quiz",
       description: data.description ?? "",
       status: data.status ?? "draft",
       waypointCount: data.waypointCount ?? 0,
+      routeDistanceKm,
       createdAt: toIsoOrNull(data.createdAt),
       updatedAt: toIsoOrNull(data.updatedAt),
     };
-  }).sort((a, b) => {
+  }));
+
+  return quizzes.sort((a, b) => {
     const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
     const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
     return bTime - aTime;
@@ -480,6 +521,11 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     title: string;
     description: string;
     status: "draft" | "published";
+    creatorUid?: string;
+    organizerName?: string | null;
+    organizerAvatarUrl?: string | null;
+    organizerSwish?: string | null;
+    isAnonymous?: boolean;
   };
   const r = rulesDoc.data() as {
     openAt: string;
@@ -499,6 +545,11 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     title: q.title,
     description: q.description,
     status: q.status,
+    creatorUid: q.creatorUid,
+    organizerName: q.organizerName ?? null,
+    organizerAvatarUrl: q.organizerAvatarUrl ?? null,
+    organizerSwish: q.organizerSwish ?? null,
+    isAnonymous: q.isAnonymous ?? false,
     openAt: r.openAt,
     closeAt: r.closeAt,
     questionTimeLimitSeconds: r.questionTimeLimitSeconds ?? null,

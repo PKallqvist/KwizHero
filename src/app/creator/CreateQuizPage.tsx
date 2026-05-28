@@ -465,6 +465,10 @@ export function CreateQuizPage(): JSX.Element {
     title: "Soccer Team Bi-weekly Quiz",
     description: "Public two-week quiz walk",
     locale: "sv",
+    organizerName: "Johan Lindqvist",
+    organizerAvatarUrl: null,
+    organizerSwish: null,
+    isAnonymous: false,
     waypoints: [createDefaultWaypoint(0)],
     ruleset: {
       openAt: now.toISOString(),
@@ -946,7 +950,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function nextStep(): void {
-    setStep((prev) => (prev < 4 ? ((prev + 1) as WizardStep) : prev));
+    setStep((prev) => (prev < 5 ? ((prev + 1) as WizardStep) : prev));
   }
 
   function previousStep(): void {
@@ -1478,6 +1482,33 @@ export function CreateQuizPage(): JSX.Element {
               value={input.description}
               onChange={(e) => setInput({ ...input, description: e.currentTarget.value })}
             />
+            <TextInput
+              label={t("creator.identity.labelOrganizerName")}
+              value={input.organizerName ?? ""}
+              onChange={(e) => setInput({
+                ...input,
+                organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+              })}
+            />
+            <Switch
+              label={t("creator.identity.labelAnonymousOrganizer")}
+              checked={input.isAnonymous}
+              onChange={(event) => setInput({
+                ...input,
+                isAnonymous: event.currentTarget.checked,
+              })}
+            />
+            {!input.isAnonymous ? (
+              <TextInput
+                label={t("creator.identity.labelOrganizerAvatarUrl")}
+                placeholder="https://..."
+                value={input.organizerAvatarUrl ?? ""}
+                onChange={(e) => setInput({
+                  ...input,
+                  organizerAvatarUrl: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+                })}
+              />
+            ) : null}
           </SimpleGrid>
         ) : null}
 

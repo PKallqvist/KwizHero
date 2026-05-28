@@ -14,7 +14,6 @@ import {
   Stack,
   Table,
   Text,
-  Title,
 } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
 import { IconAlertCircle, IconCheck, IconCopy, IconTrophy } from "@tabler/icons-react";
@@ -171,8 +170,7 @@ export function UserQuizzesPage(): JSX.Element {
 
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="center" wrap="wrap">
-        <Title order={2}>{t("userQuizzes.title")}</Title>
+      <Group justify="flex-end" align="center" wrap="wrap">
         <Button component={Link} to="/create">{t("userQuizzes.createNew")}</Button>
       </Group>
 
