@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { Link, useSearchParams } from "react-router-dom";
 import { latLngBounds } from "leaflet";
 import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
 import QRCode from "qrcode";
@@ -24,7 +25,6 @@ import {
   TextInput,
   Textarea,
   Switch,
-  Radio,
   Title,
   VisuallyHidden,
 } from "@mantine/core";
@@ -32,14 +32,18 @@ import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, Ic
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
-import { createDraftQuiz, publishQuiz } from "../../platform/firebase/quizRepository";
-import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuizDraftInput } from "../../domain/types";
+import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
+import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
+import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
 
 const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-type WizardStep = 1 | 2 | 3 | 4;
+type WizardStep = 1 | 2 | 3 | 4 | 5;
 type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
+type RoutePreviewMode = RouteMode;
+
+const PREVIEW_PRE_REVEAL_SECONDS = 3;
 
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
@@ -49,15 +53,37 @@ function previewChoiceCardStyle(index: number): CSSProperties {
   } as CSSProperties;
 }
 
+function buildAnchoredManualLegPoints(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+  storedPoints: Array<{ lat: number; lng: number }>
+): Array<{ lat: number; lng: number }> {
+  if (storedPoints.length === 0) {
+    return [from, to];
+  }
+  if (storedPoints.length === 1) {
+    return [from, storedPoints[0], to];
+  }
+
+  // Stored paths currently include historical endpoints; keep interior points
+  // and always re-anchor to the latest waypoint coordinates.
+  return [from, ...storedPoints.slice(1, -1), to];
+}
+
 interface WaypointPickerProps {
   waypoints: DraftWaypointInput[];
   selectedWaypointIndex: number;
   radius: number;
   orderedRoute: boolean;
+  legModes: RoutePreviewMode[];
+  legCoordinates: Array<Array<{ lat: number; lng: number }>>;
+  drawingLegIndex: number | null;
+  drawingLegPoints: Array<{ lat: number; lng: number }>;
   mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
   onChange: (lat: number, lng: number) => void;
+  onDrawPointAdd: (lat: number, lng: number) => void;
 }
 
 interface WaypointOverviewMapProps {
@@ -73,6 +99,10 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
   function ClickCapture(): null {
     useMapEvents({
       click(event) {
+        if (props.drawingLegIndex !== null) {
+          props.onDrawPointAdd(event.latlng.lat, event.latlng.lng);
+          return;
+        }
         props.onChange(event.latlng.lat, event.latlng.lng);
       },
     });
@@ -95,21 +125,72 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
       <TrackMapViewport onViewportChange={props.onViewportChange} />
       {props.orderedRoute && props.waypoints.length > 1 ? (
         <>
-          <Polyline
-            positions={props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number])}
-            pathOptions={{ color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 }}
-          />
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
             const next = props.waypoints[index + 1];
             if (!next) return null;
+            const legMode = props.legModes[index] ?? "crow";
+            if (legMode === "none") return null;
+            const savedManualPath = legMode === "manual" ? props.legCoordinates[index] ?? [] : [];
+            const drawPreviewPath =
+              props.drawingLegIndex === index
+                ? [
+                    { lat: waypoint.lat, lng: waypoint.lng },
+                    ...props.drawingLegPoints,
+                    { lat: next.lat, lng: next.lng },
+                  ]
+                : [];
+            const anchoredManualPath = buildAnchoredManualLegPoints(
+              { lat: waypoint.lat, lng: waypoint.lng },
+              { lat: next.lat, lng: next.lng },
+              savedManualPath
+            );
+            const legPathPoints =
+              drawPreviewPath.length >= 2
+                ? drawPreviewPath
+                : savedManualPath.length >= 2
+                  ? anchoredManualPath
+                  : [
+                      { lat: waypoint.lat, lng: waypoint.lng },
+                      { lat: next.lat, lng: next.lng },
+                    ];
+            const legPathOptions =
+              legMode === "urban"
+                ? { color: "#2f9e44", weight: 3, opacity: 0.8 }
+                : legMode === "hiking"
+                  ? { color: "#f08c00", weight: 3, opacity: 0.8, dashArray: "7 5" }
+                  : legMode === "manual"
+                    ? { color: "#c92a2a", weight: 3, opacity: 0.8, dashArray: "10 6" }
+                    : { color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 };
+            return (
+              <Polyline
+                key={`route-segment-${index}`}
+                positions={legPathPoints.map((point) => [point.lat, point.lng] as [number, number])}
+                pathOptions={legPathOptions}
+              />
+            );
+          })}
+          {props.waypoints.slice(0, -1).map((waypoint, index) => {
+            const next = props.waypoints[index + 1];
+            if (!next) return null;
+            const legMode = props.legModes[index] ?? "crow";
+            if (legMode === "none") return null;
+            const legColor =
+              legMode === "urban"
+                ? "#2f9e44"
+                : legMode === "hiking"
+                  ? "#f08c00"
+                  : legMode === "manual"
+                    ? "#c92a2a"
+                    : kwizTokens.map.routePath;
+            const legMarker = legMode === "urban" ? "U" : legMode === "hiking" ? "H" : legMode === "manual" ? "M" : "➜";
             return (
               <CircleMarker
                 key={`route-arrow-${index}`}
                 center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
                 radius={2}
-                pathOptions={{ color: kwizTokens.map.routePath, fillColor: kwizTokens.map.routePath, fillOpacity: 0 }}
+                pathOptions={{ color: legColor, fillColor: legColor, fillOpacity: 0 }}
               >
-                <LeafletTooltip permanent direction="center" offset={[0, 0]}>➜</LeafletTooltip>
+                <LeafletTooltip permanent direction="center" offset={[0, 0]}>{legMarker}</LeafletTooltip>
               </CircleMarker>
             );
           })}
@@ -335,6 +416,15 @@ function getReadableError(error: unknown): string {
   if (firebaseError.code === "permission-denied") {
     return "Firestore denied the write. Deploy firestore.rules to your Firebase project and refresh.";
   }
+  if (firebaseError.code === "functions/internal" || firebaseError.code === "internal") {
+    return "Publish function failed internally. Deploy Cloud Functions (npx firebase-tools deploy --only functions) and try again.";
+  }
+  if (firebaseError.code === "functions/not-found" || firebaseError.code === "not-found") {
+    return "Publish function was not found. Deploy Cloud Functions (npx firebase-tools deploy --only functions).";
+  }
+  if (firebaseError.code === "functions/unavailable" || firebaseError.code === "unavailable") {
+    return "Publish function is unavailable. Check Firebase Functions deployment and retry.";
+  }
   return firebaseError.message ?? "Something went wrong.";
 }
 
@@ -365,6 +455,9 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
 
 export function CreateQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
+  const [searchParams] = useSearchParams();
+  const editingQuizId = (searchParams.get("quizId") ?? "").trim();
+  const isEditingExistingQuiz = editingQuizId.length > 0;
   const isTwoColumnRouteLayout = useMediaQuery("(min-width: 75em)");
   const isMobilePreviewLayout = useMediaQuery("(max-width: 48em)");
   const [step, setStep] = useState<WizardStep>(1);
@@ -372,6 +465,10 @@ export function CreateQuizPage(): JSX.Element {
     title: "Soccer Team Bi-weekly Quiz",
     description: "Public two-week quiz walk",
     locale: "sv",
+    organizerName: "Johan Lindqvist",
+    organizerAvatarUrl: null,
+    organizerSwish: null,
+    isAnonymous: false,
     waypoints: [createDefaultWaypoint(0)],
     ruleset: {
       openAt: now.toISOString(),
@@ -382,19 +479,28 @@ export function CreateQuizPage(): JSX.Element {
       revealAt: plusDays.toISOString(),
       waypointGateRadiusMeters: 40,
       requireSequentialWaypoints: true,
+      routeMode: "crow",
+      routeLegModes: [],
+      routeLegCoordinates: [],
+      questionOrderMode: "fixed",
       scoringStrategy: "binary_correct_1_point",
     },
   });
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState(0);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [result, setResult] = useState<{ quizId: string; editKey: string } | null>(null);
+  const [editingQuizStatus, setEditingQuizStatus] = useState<"draft" | "published" | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(firebaseConfigError);
+  const [loadingEditableQuiz, setLoadingEditableQuiz] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
   const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
+  const [questionPreviewActive, setQuestionPreviewActive] = useState(false);
   const [previewPhase, setPreviewPhase] = useState<CreatorPreviewPhase>("front");
+  const [previewCountdown, setPreviewCountdown] = useState<number | null>(null);
   const [dragQuestionIndex, setDragQuestionIndex] = useState<number | null>(null);
   const [dragOverQuestionIndex, setDragOverQuestionIndex] = useState<number | null>(null);
   const [moveMode, setMoveMode] = useState(false);
@@ -405,11 +511,16 @@ export function CreateQuizPage(): JSX.Element {
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
+  const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
+  const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [manualDrawError, setManualDrawError] = useState<string | null>(null);
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
+  const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
+  const focusWaypointNameAfterAddRef = useRef(false);
   const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
@@ -417,7 +528,7 @@ export function CreateQuizPage(): JSX.Element {
 
   const shareLink = useMemo(() => {
     if (!result) return "";
-    return `${window.location.origin}/play/${result.quizId}`;
+    return buildPlayShareLink(result.quizId);
   }, [result]);
 
   useEffect(() => {
@@ -431,6 +542,49 @@ export function CreateQuizPage(): JSX.Element {
     }
     buildQr().catch(() => setQrDataUrl(""));
   }, [shareLink]);
+
+  useEffect(() => {
+    if (!isEditingExistingQuiz) return;
+
+    let mounted = true;
+
+    async function loadEditableQuiz(): Promise<void> {
+      setError(null);
+      setLoadingEditableQuiz(true);
+      try {
+        const editable = await getEditableQuizDraft(editingQuizId);
+        if (!mounted) return;
+        setEditingQuizStatus(editable.status);
+        if (editable.status === "published") {
+          setError(t("creator.publish.editNotAllowedPublished"));
+          return;
+        }
+        setInput(editable.input);
+        setSelectedWaypointIndex(0);
+        setSelectedQuestionIndex(0);
+        setResult((previous) => {
+          if (previous?.quizId === editable.quizId) return previous;
+          return { quizId: editable.quizId, editKey: "" };
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setError(getReadableError(e));
+      } finally {
+        if (!mounted) return;
+        setLoadingEditableQuiz(false);
+      }
+    }
+
+    loadEditableQuiz().catch(() => {
+      if (!mounted) return;
+      setLoadingEditableQuiz(false);
+      setError("Failed to load quiz");
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [editingQuizId, isEditingExistingQuiz]);
 
   function updateCurrentWaypoint(next: DraftWaypointInput): void {
     setInput((prev) => {
@@ -573,7 +727,11 @@ export function CreateQuizPage(): JSX.Element {
 
   function addWaypointAt(lat?: number, lng?: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
+    focusWaypointNameAfterAddRef.current = true;
     let nextWaypointIndex = 0;
     setInput((prev) => {
       nextWaypointIndex = prev.waypoints.length;
@@ -608,6 +766,9 @@ export function CreateQuizPage(): JSX.Element {
   function removeCurrentWaypoint(): void {
     if (input.waypoints.length <= 1) return;
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
     const nextWaypoints = input.waypoints.filter((_, i) => i !== selectedWaypointIndex);
     setInput((prev) => ({ ...prev, waypoints: nextWaypoints }));
@@ -752,16 +913,31 @@ export function CreateQuizPage(): JSX.Element {
 
   async function onCreate(): Promise<void> {
     setError(null);
+    setSavingDraft(true);
     try {
+      if (isEditingExistingQuiz) {
+        if (editingQuizStatus === "published") {
+          setError(t("creator.publish.editNotAllowedPublished"));
+          return;
+        }
+        await updateQuizDraft(editingQuizId, input);
+        setResult((previous) => ({
+          quizId: editingQuizId,
+          editKey: previous?.quizId === editingQuizId ? previous.editKey : "",
+        }));
+        return;
+      }
       const created = await createDraftQuiz(input);
       setResult(created);
     } catch (e) {
       setError(getReadableError(e));
+    } finally {
+      setSavingDraft(false);
     }
   }
 
   async function onPublish(): Promise<void> {
-    if (!result) return;
+    if (!result?.editKey) return;
     setPublishing(true);
     setError(null);
     try {
@@ -774,7 +950,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function nextStep(): void {
-    setStep((prev) => (prev < 4 ? ((prev + 1) as WizardStep) : prev));
+    setStep((prev) => (prev < 5 ? ((prev + 1) as WizardStep) : prev));
   }
 
   function previousStep(): void {
@@ -845,9 +1021,65 @@ export function CreateQuizPage(): JSX.Element {
 
   function selectWaypoint(index: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
     setSelectedWaypointIndex(index);
     setSelectedQuestionIndex(0);
+  }
+
+  function beginManualLegDrawing(legIndex: number): void {
+    setCoordinatesOverlayOpen(false);
+    setDrawingLegIndex(legIndex);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
+  }
+
+  function cancelManualLegDrawing(): void {
+    setDrawingLegIndex(null);
+    setDrawingLegPoints([]);
+    setManualDrawError(null);
+  }
+
+  function undoManualLegPoint(): void {
+    setDrawingLegPoints((previous) => previous.slice(0, -1));
+    setManualDrawError(null);
+  }
+
+  function addManualLegPoint(lat: number, lng: number): void {
+    if (drawingLegIndex === null) return;
+    setDrawingLegPoints((previous) => [...previous, { lat, lng }]);
+    setManualDrawError(null);
+  }
+
+  function finishManualLegDrawing(): void {
+    if (drawingLegIndex === null) return;
+    const fromWaypoint = input.waypoints[drawingLegIndex];
+    const toWaypoint = input.waypoints[drawingLegIndex + 1];
+    if (!fromWaypoint || !toWaypoint) {
+      cancelManualLegDrawing();
+      return;
+    }
+    if (drawingLegPoints.length === 0) {
+      setManualDrawError(t("creator.route.manualDrawRequiresPoint"));
+      return;
+    }
+
+    const nextLegCoordinates = [...input.ruleset.routeLegCoordinates];
+    nextLegCoordinates[drawingLegIndex] = [
+      { lat: fromWaypoint.lat, lng: fromWaypoint.lng },
+      ...drawingLegPoints,
+      { lat: toWaypoint.lat, lng: toWaypoint.lng },
+    ];
+    setInput({
+      ...input,
+      ruleset: {
+        ...input.ruleset,
+        routeLegCoordinates: nextLegCoordinates,
+      },
+    });
+    cancelManualLegDrawing();
   }
 
   function selectQuestion(index: number): void {
@@ -860,6 +1092,7 @@ export function CreateQuizPage(): JSX.Element {
   }
 
   function onPreviewPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    if (questionPreviewActive) return;
     if (previewEditing) return;
     const start = previewSwipeStartRef.current;
     previewSwipeStartRef.current = null;
@@ -913,6 +1146,59 @@ export function CreateQuizPage(): JSX.Element {
     setFocusedQuestionIndex(null);
   }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
 
+  useEffect(() => {
+    if (!currentWaypoint || !focusWaypointNameAfterAddRef.current) return;
+    focusWaypointNameAfterAddRef.current = false;
+    requestAnimationFrame(() => {
+      waypointNameInputRef.current?.focus();
+      waypointNameInputRef.current?.select();
+    });
+  }, [currentWaypoint, selectedWaypointIndex]);
+
+  useEffect(() => {
+    if (drawingLegIndex === null) return;
+    if (step !== 3 || drawingLegIndex >= input.waypoints.length - 1) {
+      cancelManualLegDrawing();
+    }
+  }, [drawingLegIndex, input.waypoints.length, step]);
+
+  useEffect(() => {
+    if (drawingLegIndex === null || step !== 3) return;
+
+    function onKeyDown(event: KeyboardEvent): void {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isTypingInField =
+        Boolean(target?.isContentEditable) ||
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select";
+      if (isTypingInField) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelManualLegDrawing();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finishManualLegDrawing();
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        undoManualLegPoint();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [drawingLegIndex, step, drawingLegPoints.length, input.waypoints.length]);
+
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
   function isQuestionValid(question: DraftQuestionInput): boolean {
@@ -952,8 +1238,12 @@ export function CreateQuizPage(): JSX.Element {
   const canGoNext =
     (step === 1 && input.title.trim().length > 2) ||
     step === 2 ||
-    (step === 3 && hasWaypointData && hasQuestionData) ||
-    step === 4;
+    (step === 3 && hasWaypointData) ||
+    (step === 4 && hasQuestionData) ||
+    step === 5;
+  const canPublishCurrentQuiz = Boolean(result?.editKey) && editingQuizStatus !== "published";
+  const effectivePreviewTimerSeconds =
+    currentQuestion?.config.timerSeconds ?? input.ruleset.questionTimeLimitSeconds ?? null;
 
   const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
@@ -962,18 +1252,207 @@ export function CreateQuizPage(): JSX.Element {
     : isTwoColumnRouteLayout
       ? "kwiz-map-picker-two-col"
       : "kwiz-map-picker-single-col";
+  const defaultRouteMode = input.ruleset.routeMode ?? "crow";
+  const routeModeOptions: Array<{ value: RoutePreviewMode; label: string }> = [
+    { value: "none", label: t("creator.route.routeModeNone") },
+    { value: "crow", label: t("creator.route.routeModeCrow") },
+    { value: "urban", label: t("creator.route.routeModeUrban") },
+    { value: "hiking", label: t("creator.route.routeModeHiking") },
+    { value: "manual", label: t("creator.route.routeModeManual") },
+  ];
+
+  function getLegRouteMode(legIndex: number): RoutePreviewMode {
+    return input.ruleset.routeLegModes[legIndex] ?? defaultRouteMode;
+  }
+
+  function setLegRouteMode(legIndex: number, mode: RoutePreviewMode): void {
+    const nextLegModes = [...input.ruleset.routeLegModes];
+    nextLegModes[legIndex] = mode;
+    const nextLegCoordinates = [...input.ruleset.routeLegCoordinates];
+    if (mode !== "manual") {
+      nextLegCoordinates[legIndex] = [];
+      if (drawingLegIndex === legIndex) {
+        cancelManualLegDrawing();
+      }
+    }
+    setInput({
+      ...input,
+      ruleset: {
+        ...input.ruleset,
+        routeLegModes: nextLegModes,
+        routeLegCoordinates: nextLegCoordinates,
+      },
+    });
+  }
+
+  function enterQuestionPreview(): void {
+    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
+    setPreviewEditing(false);
+    setQuestionPreviewActive(true);
+    setPreviewPhase("back");
+    setPreviewCountdown(null);
+  }
+
+  function exitQuestionPreview(): void {
+    setQuestionPreviewActive(false);
+    setPreviewPhase("front");
+    setPreviewCountdown(null);
+  }
+
+  function revealPreviewCard(): void {
+    if (!questionPreviewActive) return;
+    if (previewPhase === "pre_countdown") return;
+    if (effectivePreviewTimerSeconds !== null) {
+      setPreviewPhase("pre_countdown");
+      setPreviewCountdown(PREVIEW_PRE_REVEAL_SECONDS);
+      return;
+    }
+    setPreviewPhase("front");
+  }
+
+  function renderQuestionPreviewInput(): JSX.Element {
+    if (!currentQuestion) return <></>;
+
+    if (currentQuestion.questionType === "numeric") {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("player.numericAnswer")}</Text>
+        </Paper>
+      );
+    }
+
+    if (currentQuestion.questionType === "letter_order") {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("player.letterOrderAnswer")}</Text>
+        </Paper>
+      );
+    }
+
+    if (currentQuestion.choices.length === 0) {
+      return (
+        <Paper withBorder radius="md" p="sm">
+          <Text c="dimmed">{t("creator.questions.addChoice")}</Text>
+        </Paper>
+      );
+    }
+
+    return (
+      <Stack gap="xs">
+        {currentQuestion.choices.map((choice, index) => (
+          <Group key={`preview-sim-choice-${index}`} wrap="nowrap" align="flex-start">
+            <div className="kwiz-preview-choice-dot" aria-hidden="true" />
+            <Text>{choice}</Text>
+          </Group>
+        ))}
+      </Stack>
+    );
+  }
+
+  useEffect(() => {
+    if (!questionPreviewActive) return;
+    setPreviewPhase("back");
+    setPreviewCountdown(null);
+  }, [questionPreviewActive, selectedWaypointIndex, selectedQuestionIndex]);
+
+  useEffect(() => {
+    if (previewPhase !== "pre_countdown" || previewCountdown === null) return;
+
+    if (previewCountdown <= 0) {
+      setPreviewPhase("front");
+      setPreviewCountdown(null);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setPreviewCountdown((previous) => (previous === null ? null : previous - 1));
+    }, 1000);
+
+    return () => clearTimeout(timeout);
+  }, [previewCountdown, previewPhase]);
+
+  useEffect(() => {
+    if (step !== 4 && questionPreviewActive) {
+      exitQuestionPreview();
+    }
+  }, [questionPreviewActive, step]);
+
+  const routeLegs = useMemo(() => {
+    if (input.waypoints.length < 2) return [];
+
+    const speedMetersPerSecondByMode: Record<RoutePreviewMode, number> = {
+      none: 1,
+      crow: 1.35,
+      urban: 1.25,
+      hiking: 1.05,
+      manual: 1.2,
+    };
+
+    return input.waypoints.slice(0, -1).map((waypoint, index) => {
+      const next = input.waypoints[index + 1];
+      const mode = getLegRouteMode(index);
+      const manualLegPoints = input.ruleset.routeLegCoordinates[index] ?? [];
+      const anchoredManualLegPoints = buildAnchoredManualLegPoints(
+        { lat: waypoint.lat, lng: waypoint.lng },
+        { lat: next.lat, lng: next.lng },
+        manualLegPoints
+      );
+      const meters =
+        mode === "manual" && manualLegPoints.length >= 2
+          ? routeDistanceMeters(anchoredManualLegPoints)
+          : distanceMeters(
+              { lat: waypoint.lat, lng: waypoint.lng },
+              { lat: next.lat, lng: next.lng }
+            );
+      const effectiveMeters = mode === "none" ? 0 : meters;
+      const estimatedSeconds = Math.round(effectiveMeters / speedMetersPerSecondByMode[mode]);
+
+      return {
+        fromIndex: index,
+        toIndex: index + 1,
+        mode,
+        meters: effectiveMeters,
+        estimatedSeconds,
+      };
+    });
+  }, [defaultRouteMode, input.waypoints, input.ruleset.routeLegModes, input.ruleset.routeLegCoordinates]);
+  const routeDistance = useMemo(
+    () => routeLegs.reduce((sum, leg) => sum + leg.meters, 0),
+    [routeLegs]
+  );
+  const routeTotalEstimatedSeconds = useMemo(
+    () => routeLegs.reduce((sum, leg) => sum + leg.estimatedSeconds, 0),
+    [routeLegs]
+  );
 
   return (
-    <Paper withBorder shadow="sm" radius="md" p="lg">
+    <div className="kwiz-create-root">
       <Stack gap="md">
         <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
-        <Text c="dimmed">{t("creator.step", { current: step, total: 4 })}</Text>
+        <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}</Text>
+        {isEditingExistingQuiz ? (
+          <Alert icon={<IconAlertCircle size={16} />} color="blue" variant="light">
+            <Stack gap={4}>
+              <Text size="sm" fw={600}>{t("creator.publish.editingBannerTitle")}</Text>
+              <Text size="sm">{t("creator.publish.editingBannerBody", { quizId: editingQuizId })}</Text>
+              {editingQuizStatus === "published" ? (
+                <Text size="sm" c="red">{t("creator.publish.editNotAllowedPublished")}</Text>
+              ) : null}
+              <Group>
+                <Button component={Link} to="/my-quizzes" variant="subtle" size="xs">
+                  {t("creator.publish.backToMyQuizzes")}
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
+        ) : null}
 
         <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
           <Stepper.Step label={t("creator.steps.identity")} />
           <Stepper.Step label={t("creator.steps.rules")} />
-          <Stepper.Step label={t("creator.steps.routeAndQuestions")} />
+          <Stepper.Step label={t("creator.steps.route")} />
+          <Stepper.Step label={t("creator.steps.questions")} />
           <Stepper.Step label={t("creator.steps.publish")} />
         </Stepper>
 
@@ -1003,6 +1482,33 @@ export function CreateQuizPage(): JSX.Element {
               value={input.description}
               onChange={(e) => setInput({ ...input, description: e.currentTarget.value })}
             />
+            <TextInput
+              label={t("creator.identity.labelOrganizerName")}
+              value={input.organizerName ?? ""}
+              onChange={(e) => setInput({
+                ...input,
+                organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+              })}
+            />
+            <Switch
+              label={t("creator.identity.labelAnonymousOrganizer")}
+              checked={input.isAnonymous}
+              onChange={(event) => setInput({
+                ...input,
+                isAnonymous: event.currentTarget.checked,
+              })}
+            />
+            {!input.isAnonymous ? (
+              <TextInput
+                label={t("creator.identity.labelOrganizerAvatarUrl")}
+                placeholder="https://..."
+                value={input.organizerAvatarUrl ?? ""}
+                onChange={(e) => setInput({
+                  ...input,
+                  organizerAvatarUrl: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+                })}
+              />
+            ) : null}
           </SimpleGrid>
         ) : null}
 
@@ -1064,6 +1570,37 @@ export function CreateQuizPage(): JSX.Element {
                     ruleset: {
                       ...input.ruleset,
                       requireSequentialWaypoints: event.currentTarget.checked,
+                    },
+                  })
+                }
+              />
+              <Select
+                label={t("creator.rules.labelDefaultRouteMode")}
+                data={routeModeOptions}
+                value={defaultRouteMode}
+                onChange={(value) =>
+                  setInput({
+                    ...input,
+                    ruleset: {
+                      ...input.ruleset,
+                      routeMode: (value ?? "crow") as RouteMode,
+                    },
+                  })
+                }
+              />
+              <Select
+                label={t("creator.rules.labelQuestionOrderMode")}
+                data={[
+                  { value: "fixed", label: t("creator.rules.questionOrderFixed") },
+                  { value: "any", label: t("creator.rules.questionOrderAny") },
+                ]}
+                value={input.ruleset.questionOrderMode}
+                onChange={(value) =>
+                  setInput({
+                    ...input,
+                    ruleset: {
+                      ...input.ruleset,
+                      questionOrderMode: (value ?? "fixed") as QuestionOrderMode,
                     },
                   })
                 }
@@ -1142,7 +1679,7 @@ export function CreateQuizPage(): JSX.Element {
           </Stack>
         ) : null}
 
-        {step === 3 ? (
+        {step === 3 || step === 4 ? (
           <Stack gap="md">
             <Group
               justify="space-between"
@@ -1178,7 +1715,14 @@ export function CreateQuizPage(): JSX.Element {
               <Badge>{t("creator.route.waypointCount", { count: input.waypoints.length })}</Badge>
             </Group>
 
+            {step === 3 && routeDistance > 0 ? (
+              <Text size="sm" c="dimmed">
+                {t("creator.route.routeDistance", { distance: formatDistanceMeters(routeDistance) })}
+              </Text>
+            ) : null}
+
           <SimpleGrid cols={coordinatesOverlayOpen ? { base: 1, lg: 1 } : { base: 1, lg: 2 }} spacing="md">
+            {step === 3 ? (
             <Stack gap="md">
 
               {currentWaypoint ? (
@@ -1188,6 +1732,7 @@ export function CreateQuizPage(): JSX.Element {
                       <TextInput
                         label={t("creator.route.labelName")}
                         className="kwiz-creator-flex-1"
+                        ref={waypointNameInputRef}
                         value={currentWaypoint.name}
                         onChange={(e) => updateCurrentWaypoint({ ...currentWaypoint, name: e.currentTarget.value })}
                       />
@@ -1299,17 +1844,70 @@ export function CreateQuizPage(): JSX.Element {
                       waypoints={input.waypoints}
                       selectedWaypointIndex={selectedWaypointIndex}
                       radius={input.ruleset.waypointGateRadiusMeters}
-                      orderedRoute={input.ruleset.requireSequentialWaypoints}
+                      orderedRoute={input.ruleset.requireSequentialWaypoints && routeLegs.some((leg) => leg.mode !== "none")}
+                      legModes={routeLegs.map((leg) => leg.mode)}
+                      legCoordinates={input.ruleset.routeLegCoordinates}
+                      drawingLegIndex={drawingLegIndex}
+                      drawingLegPoints={drawingLegPoints}
                       mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
                       onViewportChange={setRouteMapViewport}
                       onChange={handleRouteMapClick}
+                      onDrawPointAdd={addManualLegPoint}
                     />
                   </Stack>
                 </Card>
               ) : null}
             </Stack>
+            ) : (
+            <Card withBorder radius="md" p="sm">
+              <Stack gap="sm">
+                {currentWaypoint ? (
+                  <>
+                    <Group justify="space-between" align="center" wrap="nowrap">
+                      <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
+                      <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
+                        {t("creator.questions.addCard")}
+                      </Button>
+                    </Group>
 
+                    {currentWaypoint.questions.length === 0 ? (
+                      <Card withBorder radius="md" p="md">
+                        <Stack align="center" gap="xs">
+                          <Text size="sm" c="dimmed">This waypoint has no cards yet.</Text>
+                          <Button leftSection={<IconPlus size={16} />} onClick={addQuestionToCurrentWaypoint}>
+                            {t("creator.questions.addCard")}
+                          </Button>
+                        </Stack>
+                      </Card>
+                    ) : (
+                      <Stack gap="xs">
+                        {currentWaypoint.questions.map((question, index) => {
+                          const isActive = selectedQuestionIndex === index;
+                          const valid = isQuestionValid(question);
+                          return (
+                            <Button
+                              key={`question-list-item-${index}`}
+                              variant={isActive ? "filled" : "light"}
+                              color={valid ? "teal" : "orange"}
+                              justify="space-between"
+                              onClick={() => selectQuestion(index)}
+                            >
+                              {`Q${getQuestionGlobalNumber(index)} ${question.text.trim().length > 0 ? `- ${question.text.slice(0, 38)}` : `- ${t("creator.questions.untitledQuestion")}`}`}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    )}
+                  </>
+                ) : (
+                  <Text size="sm" c="dimmed">Select a waypoint to manage questions.</Text>
+                )}
+              </Stack>
+            </Card>
+            )}
+
+            {step === 4 ? (
             <Stack gap="md">
               {currentWaypoint ? (
                 <Stack gap="sm">
@@ -1346,6 +1944,21 @@ export function CreateQuizPage(): JSX.Element {
                         </Text>
                         <Group gap={6} wrap="nowrap" align="center">
                           <Text size="xs" c="dimmed">{t("creator.questions.reorderShort")}</Text>
+                          {questionPreviewActive ? (
+                            <Button size="compact-xs" variant="light" color="gray" onClick={exitQuestionPreview}>
+                              {t("creator.questions.previewExit")}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              color="teal"
+                              onClick={enterQuestionPreview}
+                              disabled={!currentQuestion}
+                            >
+                              {t("creator.questions.previewStart")}
+                            </Button>
+                          )}
                           <ActionIcon
                             variant="subtle"
                             color="teal"
@@ -1389,18 +2002,6 @@ export function CreateQuizPage(): JSX.Element {
                           </Button>
                         </Group>
                       </Group>
-
-                      {currentQuestionIssue ? (
-                        <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`This card needs setup: ${currentQuestionIssue}.`}</Text>
-                        </Alert>
-                      ) : null}
-
-                      {!currentQuestionIssue && questionIssues.length > 0 ? (
-                        <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`${questionIssues.length} card(s) still need setup before Next is enabled.`}</Text>
-                        </Alert>
-                      ) : null}
 
                       {isMobilePreviewLayout ? (
                         <Group justify="center" gap="xs" wrap="nowrap" className="kwiz-creator-mobile-swipe-hint">
@@ -1448,30 +2049,53 @@ export function CreateQuizPage(): JSX.Element {
                         >
                           <div ref={previewEditorRef}>
                             <Stack gap="sm">
-                              {previewPhase === "back" || previewPhase === "pre_countdown" ? (
-                                <Paper className="kwiz-card-back" withBorder radius="md" p="md">
+                              {questionPreviewActive && (previewPhase === "back" || previewPhase === "pre_countdown") ? (
+                                <Paper
+                                  className="kwiz-card-back kwiz-card-back-clickable kwiz-card-back-min"
+                                  withBorder
+                                  radius="md"
+                                  p="md"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={revealPreviewCard}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter" && event.key !== " ") return;
+                                    event.preventDefault();
+                                    revealPreviewCard();
+                                  }}
+                                >
                                   {previewPhase === "pre_countdown" ? (
                                     <div className="kwiz-countdown-overlay" aria-live="polite">
                                       <Text size="xs" c="dimmed">{t("creator.questions.previewCountdownHint")}</Text>
-                                      <Title order={2} className="kwiz-countdown-number">3</Title>
+                                      <Title order={2} className="kwiz-countdown-number">{previewCountdown ?? 0}</Title>
                                     </div>
                                   ) : null}
-                                  <Stack align="center" gap="xs">
-                                    <Image
-                                      src="/branding/kwizherologo.png"
-                                      alt="KwizHero"
-                                      h={62}
-                                      w="100%"
-                                      className="kwiz-creator-preview-logo"
-                                      fit="contain"
-                                    />
-                                    <Text fw={700} size="lg">{t("creator.questions.previewQuestionCardTitle")}</Text>
-                                    <Text c="dimmed">{t("creator.questions.previewQuestionCardHint")}</Text>
+                                  <Stack align="stretch" justify="center" className="kwiz-card-back-content kwiz-card-back-content-mobile" gap="md">
+                                    <div className="kwiz-card-back-art-shell">
+                                      <img src="/branding/card-backside.png" alt="KwizHero" className="kwiz-card-back-art" />
+                                    </div>
                                   </Stack>
                                 </Paper>
                               ) : null}
 
-                              {previewPhase === "front" ? (
+                              {questionPreviewActive && previewPhase === "front" ? (
+                                <div className="kwiz-reveal-enter">
+                                  <Stack gap="sm">
+                                    <Title order={5}>{currentQuestion?.text || t("creator.questions.labelText")}</Title>
+                                    {effectivePreviewTimerSeconds !== null ? (
+                                      <Badge color="orange" leftSection={<IconClock size={14} />}>
+                                        {`${effectivePreviewTimerSeconds}s`}
+                                      </Badge>
+                                    ) : null}
+                                    {renderQuestionPreviewInput()}
+                                    <Group>
+                                      <Button disabled>{t("player.submitAnswer")}</Button>
+                                    </Group>
+                                  </Stack>
+                                </div>
+                              ) : null}
+
+                              {!questionPreviewActive ? (
                                 <>
                                   <Textarea
                                     autosize
@@ -1649,6 +2273,18 @@ export function CreateQuizPage(): JSX.Element {
                           </Button>
                         ) : null}
                       </Group>
+
+                      {currentQuestionIssue ? (
+                        <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
+                          <Text size="sm">{`This card needs setup: ${currentQuestionIssue}.`}</Text>
+                        </Alert>
+                      ) : null}
+
+                      {!currentQuestionIssue && questionIssues.length > 0 ? (
+                        <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
+                          <Text size="sm">{`${questionIssues.length} card(s) still need setup before Next is enabled.`}</Text>
+                        </Alert>
+                      ) : null}
                     </Stack>
                   </Card>
 
@@ -1865,11 +2501,91 @@ export function CreateQuizPage(): JSX.Element {
                 </>
               ) : null}
             </Stack>
+            ) : (
+            <Card withBorder radius="md" p="sm">
+              <Stack gap="xs">
+                <Text size="sm" fw={600}>{t("creator.route.routeLegsTitle")}</Text>
+
+                {routeLegs.length > 0 ? (
+                  <Stack gap={6}>
+                    {routeLegs.map((leg, index) => (
+                      <Stack
+                        key={`route-leg-preview-${index}`}
+                        gap={4}
+                        p={drawingLegIndex === index ? "xs" : 0}
+                        style={drawingLegIndex === index ? { border: "1px solid var(--mantine-color-teal-4)", borderRadius: "8px" } : undefined}
+                      >
+                        <Group justify="space-between" align="center" wrap="nowrap">
+                          <Text size="sm">{t("creator.route.routeLegLabel", { from: leg.fromIndex + 1, to: leg.toIndex + 1 })}</Text>
+                          <Text size="xs" c="dimmed">
+                            {leg.mode === "none"
+                              ? t("creator.route.routeLegHidden")
+                              : t("creator.route.routeLegDistanceTime", {
+                                  distance: formatDistanceMeters(leg.meters),
+                                  minutes: Math.max(1, Math.round(leg.estimatedSeconds / 60)),
+                                })}
+                          </Text>
+                        </Group>
+                        <Select
+                          size="xs"
+                          data={routeModeOptions}
+                          value={leg.mode}
+                          onChange={(value) => setLegRouteMode(index, (value ?? defaultRouteMode) as RoutePreviewMode)}
+                        />
+                        {leg.mode === "manual" ? (
+                          <Group gap="xs">
+                            {drawingLegIndex === index ? (
+                              <>
+                                <Button size="xs" variant="filled" onClick={finishManualLegDrawing}>
+                                  {t("creator.route.manualDrawDone")}
+                                </Button>
+                                <Button size="xs" variant="light" onClick={undoManualLegPoint} disabled={drawingLegPoints.length === 0}>
+                                  {t("creator.route.manualDrawUndo")}
+                                </Button>
+                                <Button size="xs" variant="default" onClick={cancelManualLegDrawing}>
+                                  {t("creator.route.manualDrawCancel")}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button size="xs" variant="light" onClick={() => beginManualLegDrawing(index)}>
+                                {t("creator.route.manualDrawEdit")}
+                              </Button>
+                            )}
+                          </Group>
+                        ) : null}
+                        {drawingLegIndex === index ? (
+                          <Text size="xs" c="dimmed">
+                            {t("creator.route.manualDrawActiveHint", { points: drawingLegPoints.length })}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    ))}
+                    <Group justify="space-between" align="center" mt={4}>
+                      <Text size="sm" fw={600}>{t("creator.route.routeLegsTotal")}</Text>
+                      <Text size="sm" fw={600}>
+                        {t("creator.route.routeLegDistanceTime", {
+                          distance: formatDistanceMeters(routeDistance),
+                          minutes: Math.max(1, Math.round(routeTotalEstimatedSeconds / 60)),
+                        })}
+                      </Text>
+                    </Group>
+                    {manualDrawError ? (
+                      <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
+                        <Text size="sm">{manualDrawError}</Text>
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                ) : (
+                  <Text size="sm" c="dimmed">{t("creator.route.routeLegsEmptyHint")}</Text>
+                )}
+              </Stack>
+            </Card>
+            )}
           </SimpleGrid>
           </Stack>
         ) : null}
 
-        {step === 4 ? (
+        {step === 5 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
             <Card withBorder radius="md">
               <Title order={4}>{t("creator.publish.reviewHeading")}</Title>
@@ -1903,19 +2619,24 @@ export function CreateQuizPage(): JSX.Element {
               <Stack gap="sm">
                 <Title order={4}>{t("creator.publish.publishHeading")}</Title>
                 <Group>
-                  <Button onClick={onCreate} disabled={Boolean(firebaseConfigError)}>
-                    {t("creator.publish.createDraft")}
+                  <Button onClick={onCreate} disabled={Boolean(firebaseConfigError) || loadingEditableQuiz} loading={savingDraft}>
+                    {isEditingExistingQuiz ? t("creator.publish.saveDraftChanges") : t("creator.publish.createDraft")}
                   </Button>
-                  <Button variant="light" onClick={onPublish} disabled={!result || Boolean(firebaseConfigError)} loading={publishing}>
-                    {t("creator.publish.publish")}
-                  </Button>
+                  {canPublishCurrentQuiz ? (
+                    <Button variant="light" onClick={onPublish} disabled={Boolean(firebaseConfigError) || loadingEditableQuiz} loading={publishing}>
+                      {t("creator.publish.publish")}
+                    </Button>
+                  ) : null}
                 </Group>
+                {isEditingExistingQuiz && !canPublishCurrentQuiz ? (
+                  <Text size="xs" c="dimmed">{t("creator.publish.publishDisabledNoEditKey")}</Text>
+                ) : null}
                 {result ? (
                   <Alert icon={<IconCircleCheck size={16} />} color="teal" variant="light">
                     <Stack gap={4}>
-                      <Text size="sm" fw={600}>{t("creator.publish.editKeyWarning")}</Text>
+                      {result.editKey ? <Text size="sm" fw={600}>{t("creator.publish.editKeyWarning")}</Text> : null}
                       <Text size="sm">{t("creator.publish.labelQuizId")}: {result.quizId}</Text>
-                      <Text size="sm">{t("creator.publish.labelEditKey")}: {result.editKey}</Text>
+                      {result.editKey ? <Text size="sm">{t("creator.publish.labelEditKey")}: {result.editKey}</Text> : null}
                       <Text size="sm">{t("creator.publish.shareLink")}: {shareLink}</Text>
                     </Stack>
                   </Alert>
@@ -1938,7 +2659,7 @@ export function CreateQuizPage(): JSX.Element {
           <Button variant="default" onClick={previousStep} disabled={step === 1}>
             {t("common.back")}
           </Button>
-          <Button onClick={nextStep} disabled={step === 4 || !canGoNext}>
+          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
             {t("common.next")}
           </Button>
         </Group>
@@ -1949,6 +2670,6 @@ export function CreateQuizPage(): JSX.Element {
           </Alert>
         ) : null}
       </Stack>
-    </Paper>
+    </div>
   );
 }

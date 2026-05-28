@@ -43,3 +43,23 @@ export function distanceMeters(a: Coordinates, b: Coordinates): number {
 
   return R * c;
 }
+
+export function routeDistanceMeters(points: Coordinates[]): number {
+  if (points.length < 2) return 0;
+
+  return points.slice(1).reduce((sum, point, index) => {
+    return sum + distanceMeters(points[index], point);
+  }, 0);
+}
+
+export function formatDistanceMeters(distance: number): string {
+  if (!Number.isFinite(distance) || distance <= 0) {
+    return "0 m";
+  }
+
+  if (distance >= 1000) {
+    return `${(distance / 1000).toFixed(distance >= 10000 ? 0 : 1)} km`;
+  }
+
+  return `${Math.round(distance)} m`;
+}

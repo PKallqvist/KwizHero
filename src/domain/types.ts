@@ -1,5 +1,7 @@
 export type RevealMode = "instant" | "on_completion" | "scheduled";
 export type QuestionType = "multiple_choice" | "numeric" | "letter_order";
+export type RouteMode = "none" | "crow" | "urban" | "hiking" | "manual";
+export type QuestionOrderMode = "fixed" | "any";
 
 export interface QuestionConfig {
   timerSeconds: number | null;
@@ -15,6 +17,10 @@ export interface Ruleset {
   revealAt: string | null;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
+  routeMode: RouteMode;
+  routeLegModes: RouteMode[];
+  routeLegCoordinates: Array<Array<{ lat: number; lng: number }>>;
+  questionOrderMode: QuestionOrderMode;
   scoringStrategy: "binary_correct_1_point";
 }
 
@@ -39,6 +45,10 @@ export interface QuizDraftInput {
   title: string;
   description: string;
   locale: "en" | "sv";
+  organizerName: string | null;
+  organizerAvatarUrl: string | null;
+  organizerSwish: string | null;
+  isAnonymous: boolean;
   waypoints: DraftWaypointInput[];
   ruleset: Ruleset;
 }
@@ -48,6 +58,11 @@ export interface QuizSummary {
   title: string;
   description: string;
   status: "draft" | "published";
+  creatorUid?: string;
+  organizerName: string | null;
+  organizerAvatarUrl: string | null;
+  organizerSwish: string | null;
+  isAnonymous: boolean;
   openAt: string;
   closeAt: string;
   questionTimeLimitSeconds: number | null;
@@ -56,6 +71,26 @@ export interface QuizSummary {
   revealAt: string | null;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
+  routeMode: RouteMode;
+  questionOrderMode: QuestionOrderMode;
+}
+
+export interface QuizListItem {
+  id: string;
+  title: string;
+  description: string;
+  status: "draft" | "published";
+  waypointCount: number;
+  routeDistanceKm?: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  nickname: string;
+  score: number;
+  completedAt: string | null;
 }
 
 export interface QuizWalkQuestion {
@@ -114,4 +149,14 @@ export interface AnswerResult {
   isCorrect: boolean;
   pointsAwarded: number;
   score: number;
+}
+
+export interface PlayerEarnedBadge {
+  id: string;
+  badgeId: string;
+  type: "tiered" | "discovery";
+  tier: number | null;
+  xpReward: number;
+  imageKey: string | null;
+  earnedAt: string | null;
 }
