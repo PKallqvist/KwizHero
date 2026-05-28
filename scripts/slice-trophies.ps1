@@ -1,14 +1,36 @@
 param(
-  [string]$MainSheet = "assets/source/trophies-main.png",
-  [string]$WoodSheet = "assets/source/trophies-wood.png",
+  [string]$MainSheet = "",
+  [string]$WoodSheet = "",
   [string]$OutDir = "public/branding/trophies",
   [int]$Padding = 16,
-  [int]$BackgroundTolerance = 30
+  [int]$BackgroundTolerance = 34
 )
 
 $ErrorActionPreference = "Stop"
-
 Add-Type -AssemblyName System.Drawing
+
+function Resolve-SourceImage {
+  param(
+    [AllowEmptyString()]
+    [string]$RequestedPath,
+    [Parameter(Mandatory = $true)]
+    [string[]]$FallbackCandidates,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($RequestedPath) -and (Test-Path -Path $RequestedPath -PathType Leaf)) {
+    return $RequestedPath
+  }
+
+  foreach ($candidate in $FallbackCandidates) {
+    if (Test-Path -Path $candidate -PathType Leaf) {
+      return $candidate
+    }
+  }
+
+  throw "Missing $Label trophy sheet. Checked: $($FallbackCandidates -join ', ')"
+}
 
 function Get-SlotRect {
   param(
@@ -22,13 +44,7 @@ function Get-SlotRect {
 
   $x0 = [Math]::Floor($Sheet.Width * $SlotIndex / $SlotCount)
   $x1 = [Math]::Floor($Sheet.Width * ($SlotIndex + 1) / $SlotCount)
-  $slotWidth = $x1 - $x0
-
-  if ($x0 -lt 0 -or $x1 -gt $Sheet.Width -or $slotWidth -le 0) {
-    throw "Slot index $SlotIndex is outside of sheet width $($Sheet.Width)."
-  }
-
-  return [System.Drawing.Rectangle]::new($x0, 0, $slotWidth, $Sheet.Height)
+  return [System.Drawing.Rectangle]::new($x0, 0, ($x1 - $x0), $Sheet.Height)
 }
 
 function Get-DistanceSq {
@@ -51,28 +67,20 @@ function Get-BackgroundPalette {
     [System.Drawing.Bitmap]$Sheet
   )
 
-  $sampleBottom = [Math]::Max(1, [Math]::Floor($Sheet.Height * 0.25))
+  $sampleHeight = [Math]::Max(1, [Math]::Floor($Sheet.Height * 0.30))
   $hist = @{}
 
-  for ($y = 0; $y -lt $sampleBottom; $y += 2) {
+  for ($y = 0; $y -lt $sampleHeight; $y += 2) {
     for ($x = 0; $x -lt $Sheet.Width; $x += 2) {
-      $pixel = $Sheet.GetPixel($x, $y)
-      if ($pixel.A -lt 240) {
-        continue
-      }
-      $key = "$($pixel.R),$($pixel.G),$($pixel.B)"
-      if ($hist.ContainsKey($key)) {
-        $hist[$key] += 1
-      }
-      else {
-        $hist[$key] = 1
-      }
+      $p = $Sheet.GetPixel($x, $y)
+      if ($p.A -lt 240) { continue }
+      $key = "$($p.R),$($p.G),$($p.B)"
+      if ($hist.ContainsKey($key)) { $hist[$key] += 1 } else { $hist[$key] = 1 }
     }
   }
 
-  $top = $hist.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 2
+  $top = $hist.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 2
   if ($top.Count -lt 2) {
-    # Fallback for unexpected sheets.
     return @(
       [System.Drawing.Color]::FromArgb(255, 204, 204, 204),
       [System.Drawing.Color]::FromArgb(255, 179, 179, 179)
@@ -81,14 +89,13 @@ function Get-BackgroundPalette {
 
   $colors = @()
   foreach ($entry in $top) {
-    $parts = $entry.Key.Split(",")
+    $parts = $entry.Key.Split(',')
     $colors += [System.Drawing.Color]::FromArgb(255, [int]$parts[0], [int]$parts[1], [int]$parts[2])
   }
-
   return $colors
 }
 
-function Get-LargestForegroundBounds {
+function Get-ForegroundBounds {
   param(
     [Parameter(Mandatory = $true)]
     [System.Drawing.Bitmap]$Sheet,
@@ -102,106 +109,45 @@ function Get-LargestForegroundBounds {
     [int]$ToleranceSq
   )
 
-  $width = $SlotRect.Width
-  $height = $SlotRect.Height
-  $size = $width * $height
-  $mask = New-Object bool[] $size
-  $visited = New-Object bool[] $size
+  $minX = [int]::MaxValue
+  $minY = [int]::MaxValue
+  $maxX = -1
+  $maxY = -1
 
-  for ($y = 0; $y -lt $height; $y += 1) {
-    for ($x = 0; $x -lt $width; $x += 1) {
-      $pixel = $Sheet.GetPixel($SlotRect.X + $x, $SlotRect.Y + $y)
-      if ($pixel.A -lt 16) {
-        continue
-      }
+  $scanTop = [int][Math]::Floor($SlotRect.Height * 0.18)
+  $scanBottom = [int][Math]::Floor($SlotRect.Height * 0.92)
 
-      $dA = Get-DistanceSq -A $pixel -B $BackgroundA
-      $dB = Get-DistanceSq -A $pixel -B $BackgroundB
-      $index = ($y * $width) + $x
-      $mask[$index] = ([Math]::Min($dA, $dB) -gt $ToleranceSq)
+  for ($y = $scanTop; $y -lt $scanBottom; $y += 1) {
+    for ($x = 0; $x -lt $SlotRect.Width; $x += 1) {
+      $px = $SlotRect.X + $x
+      $py = $SlotRect.Y + $y
+      $p = $Sheet.GetPixel($px, $py)
+      if ($p.A -lt 16) { continue }
+
+      $dA = Get-DistanceSq -A $p -B $BackgroundA
+      $dB = Get-DistanceSq -A $p -B $BackgroundB
+      if ([Math]::Min($dA, $dB) -le $ToleranceSq) { continue }
+
+      if ($px -lt $minX) { $minX = $px }
+      if ($px -gt $maxX) { $maxX = $px }
+      if ($py -lt $minY) { $minY = $py }
+      if ($py -gt $maxY) { $maxY = $py }
     }
   }
 
-  $largestArea = 0
-  $best = $null
-
-  for ($y = 0; $y -lt $height; $y += 1) {
-    for ($x = 0; $x -lt $width; $x += 1) {
-      $startIndex = ($y * $width) + $x
-      if (-not $mask[$startIndex] -or $visited[$startIndex]) {
-        continue
-      }
-
-      $queue = [System.Collections.Generic.Queue[int]]::new()
-      $queue.Enqueue($startIndex)
-      $visited[$startIndex] = $true
-
-      $area = 0
-      $minX = $x
-      $maxX = $x
-      $minY = $y
-      $maxY = $y
-
-      while ($queue.Count -gt 0) {
-        $index = $queue.Dequeue()
-        $cx = $index % $width
-        $cy = [Math]::Floor($index / $width)
-
-        $area += 1
-        if ($cx -lt $minX) { $minX = $cx }
-        if ($cx -gt $maxX) { $maxX = $cx }
-        if ($cy -lt $minY) { $minY = $cy }
-        if ($cy -gt $maxY) { $maxY = $cy }
-
-        $neighbors = @(
-          @($cx - 1, $cy),
-          @($cx + 1, $cy),
-          @($cx, $cy - 1),
-          @($cx, $cy + 1)
-        )
-
-        foreach ($neighbor in $neighbors) {
-          $nx = $neighbor[0]
-          $ny = $neighbor[1]
-          if ($nx -lt 0 -or $nx -ge $width -or $ny -lt 0 -or $ny -ge $height) {
-            continue
-          }
-
-          $nIndex = ($ny * $width) + $nx
-          if ($visited[$nIndex] -or -not $mask[$nIndex]) {
-            continue
-          }
-
-          $visited[$nIndex] = $true
-          $queue.Enqueue($nIndex)
-        }
-      }
-
-      if ($area -gt $largestArea) {
-        $largestArea = $area
-        $best = [System.Drawing.Rectangle]::new(
-          $SlotRect.X + $minX,
-          $SlotRect.Y + $minY,
-          ($maxX - $minX + 1),
-          ($maxY - $minY + 1)
-        )
-      }
-    }
-  }
-
-  if ($best -eq $null) {
+  if ($maxX -lt $minX -or $maxY -lt $minY) {
     return $SlotRect
   }
 
-  return $best
+  return [System.Drawing.Rectangle]::new($minX, $minY, ($maxX - $minX + 1), ($maxY - $minY + 1))
 }
 
-function Export-CenteredCrop {
+function Export-Centered {
   param(
     [Parameter(Mandatory = $true)]
     [System.Drawing.Bitmap]$Sheet,
     [Parameter(Mandatory = $true)]
-    [System.Drawing.Rectangle]$SourceBounds,
+    [System.Drawing.Rectangle]$Source,
     [Parameter(Mandatory = $true)]
     [int]$CanvasWidth,
     [Parameter(Mandatory = $true)]
@@ -211,28 +157,30 @@ function Export-CenteredCrop {
   )
 
   $canvas = [System.Drawing.Bitmap]::new($CanvasWidth, $CanvasHeight, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-  $graphics = [System.Drawing.Graphics]::FromImage($canvas)
+  $g = [System.Drawing.Graphics]::FromImage($canvas)
   try {
-    $graphics.Clear([System.Drawing.Color]::Transparent)
-    $destX = [Math]::Floor(($CanvasWidth - $SourceBounds.Width) / 2)
-    $destY = [Math]::Floor(($CanvasHeight - $SourceBounds.Height) / 2)
-    $destRect = [System.Drawing.Rectangle]::new($destX, $destY, $SourceBounds.Width, $SourceBounds.Height)
-    $graphics.DrawImage($Sheet, $destRect, $SourceBounds, [System.Drawing.GraphicsUnit]::Pixel)
+    $g.Clear([System.Drawing.Color]::Transparent)
+    $destX = [int][Math]::Floor(($CanvasWidth - $Source.Width) / 2)
+    $destY = [int][Math]::Floor(($CanvasHeight - $Source.Height) / 2)
+    $dest = [System.Drawing.Rectangle]::new($destX, $destY, $Source.Width, $Source.Height)
+    $g.DrawImage($Sheet, $dest, $Source, [System.Drawing.GraphicsUnit]::Pixel)
     $canvas.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
   }
   finally {
-    $graphics.Dispose()
+    $g.Dispose()
     $canvas.Dispose()
   }
 }
 
-if (-not (Test-Path -Path $MainSheet -PathType Leaf)) {
-  throw "Missing main trophy sheet: $MainSheet"
-}
+$MainSheet = Resolve-SourceImage -RequestedPath $MainSheet -FallbackCandidates @(
+  "assets/source/trophies-main.png",
+  "public/assets/source/trophies-main.png"
+) -Label "main"
 
-if (-not (Test-Path -Path $WoodSheet -PathType Leaf)) {
-  throw "Missing wood trophy sheet: $WoodSheet"
-}
+$WoodSheet = Resolve-SourceImage -RequestedPath $WoodSheet -FallbackCandidates @(
+  "assets/source/trophies-wood.png",
+  "public/assets/source/trophies-wood.png"
+) -Label "wood"
 
 New-Item -Path $OutDir -ItemType Directory -Force | Out-Null
 
@@ -242,7 +190,7 @@ $woodBitmap = [System.Drawing.Bitmap]::new($WoodSheet)
 try {
   $mainPalette = Get-BackgroundPalette -Sheet $mainBitmap
   $woodPalette = Get-BackgroundPalette -Sheet $woodBitmap
-  $toleranceSq = $BackgroundTolerance * $BackgroundTolerance
+  $tolSq = $BackgroundTolerance * $BackgroundTolerance
 
   $exports = @(
     @{ sheet = $mainBitmap; slot = 0; palette = $mainPalette; file = "trophy-iron.png" },
@@ -258,18 +206,9 @@ try {
   $maxHeight = 0
 
   foreach ($item in $exports) {
-    $slotRect = Get-SlotRect -Sheet $item.sheet -SlotCount 5 -SlotIndex $item.slot
-    $bounds = Get-LargestForegroundBounds `
-      -Sheet $item.sheet `
-      -SlotRect $slotRect `
-      -BackgroundA $item.palette[0] `
-      -BackgroundB $item.palette[1] `
-      -ToleranceSq $toleranceSq
-
-    $boundsByFile[$item.file] = @{
-      sheet = $item.sheet
-      bounds = $bounds
-    }
+    $slotRect = Get-SlotRect -Sheet $item.sheet -SlotIndex $item.slot -SlotCount 5
+    $bounds = Get-ForegroundBounds -Sheet $item.sheet -SlotRect $slotRect -BackgroundA $item.palette[0] -BackgroundB $item.palette[1] -ToleranceSq $tolSq
+    $boundsByFile[$item.file] = @{ sheet = $item.sheet; bounds = $bounds }
 
     if ($bounds.Width -gt $maxWidth) { $maxWidth = $bounds.Width }
     if ($bounds.Height -gt $maxHeight) { $maxHeight = $bounds.Height }
@@ -280,17 +219,12 @@ try {
 
   foreach ($item in $exports) {
     $entry = $boundsByFile[$item.file]
-    Export-CenteredCrop `
-      -Sheet $entry.sheet `
-      -SourceBounds $entry.bounds `
-      -CanvasWidth $canvasWidth `
-      -CanvasHeight $canvasHeight `
-      -OutputPath (Join-Path $OutDir $item.file)
+    Export-Centered -Sheet $entry.sheet -Source $entry.bounds -CanvasWidth $canvasWidth -CanvasHeight $canvasHeight -OutputPath (Join-Path $OutDir $item.file)
   }
+
+  Write-Host "Trophy PNGs exported to $OutDir (centered $canvasWidth x $canvasHeight)."
 }
 finally {
   $mainBitmap.Dispose()
   $woodBitmap.Dispose()
 }
-
-Write-Host "Trophy PNGs exported to $OutDir (centered $canvasWidth x $canvasHeight)."

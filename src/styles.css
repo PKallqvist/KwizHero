@@ -20,7 +20,10 @@ body,
 
 body {
   overflow-x: hidden;
-  background: #0f1b2d;
+  background:
+    radial-gradient(1200px 700px at 20% -10%, rgba(46, 95, 175, 0.24), transparent 55%),
+    radial-gradient(900px 540px at 110% 20%, rgba(28, 162, 120, 0.14), transparent 60%),
+    linear-gradient(180deg, #0a1322 0%, #0b1729 45%, #091322 100%);
 }
 
 [data-mantine-color-scheme="dark"] {
@@ -89,28 +92,72 @@ body {
 
 .kwiz-profile-root {
   width: 100%;
+  --kwiz-profile-gutter: 16px;
 }
 
-.kwiz-profile-frame {
-  background: linear-gradient(170deg, #f9fbff 0%, #f3f6fc 45%, #edf3f8 100%);
-  border-color: #d5dde8;
+.kwiz-profile-content {
+  padding: 0 var(--kwiz-profile-gutter) var(--kwiz-profile-gutter);
 }
 
-.kwiz-profile-hero {
-  background: #ffffff;
-  border-color: #d5dde8;
+.kwiz-profile-hero-panel {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(170px 140px at 50% 4%, rgba(46, 145, 255, 0.18), transparent 72%),
+    linear-gradient(180deg, #0d2c56 0%, #0b2550 100%);
+  border-color: #2e4f77;
+  box-shadow: inset 0 1px 0 rgba(170, 223, 255, 0.16), 0 12px 30px rgba(2, 12, 24, 0.4);
+  animation: kwiz-hero-enter 360ms cubic-bezier(0.2, 1, 0.24, 1) both;
+}
+
+@keyframes kwiz-hero-enter {
+  from {
+    transform: translateY(8px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.kwiz-profile-hero-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(209, 218, 233, 0.22);
+  color: #d8e4f5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.kwiz-profile-hero-top {
+  padding: 18px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .kwiz-profile-avatar {
-  width: 56px;
-  height: 56px;
+  width: 66px;
+  height: 66px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  color: #1f4f93;
-  background: #e7f0fb;
+  color: #7db9ff;
+  font-size: 30px;
+  background: radial-gradient(circle at 34% 24%, #1d4f88 0%, #18416d 72%);
+  border: 1px solid rgba(72, 150, 255, 0.75);
+  box-shadow: 0 8px 22px rgba(6, 14, 31, 0.45), inset 0 1px 0 rgba(170, 220, 255, 0.35);
   flex-shrink: 0;
 }
 
@@ -120,14 +167,24 @@ body {
 }
 
 .kwiz-profile-name {
-  font-size: 20px;
+  font-size: 22px;
+  line-height: 1.05;
+  color: #ffffff;
+  text-align: center;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.kwiz-profile-xp-label {
+  color: #9fb6d2;
+  font-weight: 700;
 }
 
 .kwiz-profile-progress-track {
-  width: 100%;
-  height: 6px;
+  width: 148px;
+  height: 4px;
   border-radius: 999px;
-  background: #d7dce2;
+  background: rgba(154, 181, 214, 0.23);
   overflow: hidden;
 }
 
@@ -135,25 +192,50 @@ body {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #d97706, #f59e0b);
+  background: linear-gradient(90deg, #f5b326, #ef8e22);
 }
 
-.kwiz-profile-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.kwiz-profile-hero-stats-grid {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
-.kwiz-profile-stat-card {
-  background: #ffffff;
-  border-color: #d5dde8;
+.kwiz-profile-hero-stat-cell {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 
-.kwiz-profile-stat-value {
-  font-size: 30px;
+.kwiz-profile-hero-stat-cell + .kwiz-profile-hero-stat-cell {
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.kwiz-profile-hero-stat-value {
+  font-size: 28px;
   line-height: 1;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.kwiz-profile-hero-stat-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  text-align: center;
+}
+
+.kwiz-profile-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.4);
   font-weight: 700;
-  color: #0f172a;
 }
 
 .kwiz-profile-badge-grid {
@@ -163,8 +245,9 @@ body {
 }
 
 .kwiz-profile-badge-card {
-  background: #ffffff;
-  border-color: #d5dde8;
+  background: linear-gradient(165deg, rgba(11, 34, 60, 0.7) 0%, rgba(13, 30, 50, 0.62) 100%);
+  border-color: rgba(98, 136, 185, 0.26);
+  color: #e9f2ff;
 }
 
 .kwiz-profile-badge-icon {
@@ -189,6 +272,232 @@ body {
 .kwiz-profile-badge-icon.is-discovery {
   border-color: #93c5fd;
   background: #ebf5ff;
+}
+
+.kwiz-discovery-section {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.kwiz-discovery-item {
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.kwiz-discovery-item:first-child {
+  border-top: 0;
+}
+
+.kwiz-trophy-cabinet {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.kwiz-trophy-shelf-scroll {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  margin-inline: calc(var(--kwiz-profile-gutter) * -1);
+  padding: 8px var(--kwiz-profile-gutter) 14px;
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+}
+
+.kwiz-trophy-shelf-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.kwiz-trophy-shelf-edge {
+  height: 8px;
+  border-radius: 0 0 10px 10px;
+  background: #3a2008;
+}
+
+.kwiz-trophy-slot-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 92px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px;
+  scroll-snap-align: center;
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.kwiz-trophy-slot-button:not(.is-locked):hover,
+.kwiz-trophy-slot-button:not(.is-locked):focus-visible {
+  transform: translateY(-2px) scale(1.02);
+}
+
+.kwiz-trophy-slot-button.is-locked {
+  cursor: not-allowed;
+}
+
+.kwiz-trophy-slot-button.is-active .kwiz-trophy-plaque {
+  border-color: rgba(239, 159, 39, 0.45);
+  box-shadow: 0 0 0 1px rgba(239, 159, 39, 0.22);
+}
+
+.kwiz-trophy-image-shell {
+  width: 52px;
+  height: 60px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kwiz-trophy-image-shell.is-locked {
+  filter: grayscale(1) brightness(0.4);
+}
+
+.kwiz-trophy-image {
+  width: 52px;
+  height: 60px;
+  object-fit: contain;
+}
+
+.trophy-icon-overlay {
+  position: absolute;
+  bottom: 38%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.kwiz-trophy-plaque {
+  width: 100%;
+  background: #1a0e04;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 5px;
+}
+
+.kwiz-trophy-plaque-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #efe3d3;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.kwiz-trophy-dot-row {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.kwiz-trophy-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.kwiz-trophy-dot.is-filled {
+  background: #ef9f27;
+}
+
+.kwiz-trophy-detail-panel {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(160deg, rgba(38, 21, 10, 0.96) 0%, rgba(30, 15, 8, 0.94) 100%);
+  color: #f0e9df;
+  animation: kwiz-surface-rise 220ms cubic-bezier(0.2, 1, 0.24, 1) both;
+}
+
+@keyframes kwiz-surface-rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.kwiz-trophy-detail-image {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.kwiz-trophy-progress-track {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.kwiz-trophy-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d97706, #ef9f27);
+}
+
+.kwiz-trophy-threshold-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.kwiz-trophy-threshold-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.kwiz-trophy-threshold-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.kwiz-trophy-threshold-dot.is-earned {
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.kwiz-trophy-threshold-dot.is-current {
+  background: #ef9f27;
+  border-color: rgba(239, 159, 39, 0.9);
+  box-shadow: 0 0 0 2px rgba(239, 159, 39, 0.25);
+}
+
+.kwiz-trophy-threshold-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+@media (min-width: 62em) {
+  .kwiz-trophy-image-shell,
+  .kwiz-trophy-image {
+    width: 64px;
+    height: 74px;
+  }
+}
+
+@media (max-width: 48em) {
+  .kwiz-profile-root {
+    --kwiz-profile-gutter: 12px;
+  }
 }
 
 .kwiz-card-back-min {
@@ -1665,7 +1974,10 @@ body {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: #0f1b2d;
+  background:
+    radial-gradient(1200px 700px at 20% -10%, rgba(46, 95, 175, 0.24), transparent 55%),
+    radial-gradient(900px 540px at 110% 20%, rgba(28, 162, 120, 0.14), transparent 60%),
+    linear-gradient(180deg, #0a1322 0%, #0b1729 45%, #091322 100%);
 }
 
 .kwiz-landing-layout {
@@ -1684,6 +1996,25 @@ body {
     max(16px, env(safe-area-inset-right, 0px))
     calc(80px + env(safe-area-inset-bottom, 0px))
     max(16px, env(safe-area-inset-left, 0px));
+  position: relative;
+}
+
+.kwiz-standard-layout::before {
+  content: "";
+  position: absolute;
+  inset: 4px 8px auto;
+  height: 260px;
+  border-radius: 18px;
+  pointer-events: none;
+  background:
+    linear-gradient(120deg, rgba(60, 126, 221, 0.18), rgba(31, 168, 132, 0.08)),
+    radial-gradient(70% 110% at 10% 0%, rgba(125, 183, 255, 0.18), transparent 70%);
+  z-index: 0;
+}
+
+.kwiz-standard-layout > * {
+  position: relative;
+  z-index: 1;
 }
 
 .kwiz-play-layout {
