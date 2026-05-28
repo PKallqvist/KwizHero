@@ -7,7 +7,7 @@ export interface BadgeText {
 }
 
 export interface BadgeTierConfig {
-  tier: 1 | 2 | 3 | 4;
+  tier: 1 | 2 | 3 | 4 | 5 | 6;
   name: BadgeText;
   unlockValue: number;
   xpReward: number;
@@ -72,39 +72,53 @@ export const BADGE_CATALOG = [
     type: "tiered",
     name: makeLocalizedText("Quiz veteran", "Quizveteran"),
     description: makeLocalizedText(
-      "Complete more quizzes to climb from Iron to Gold.",
-      "Slutför fler quiz för att klättra från Järn till Guld."
+      "Complete more quizzes to climb from Wood to Platinum.",
+      "Slutför fler quiz för att klättra från Trä till Platina."
     ),
     imageKey: null,
     progressionMetric: "quizzes_completed",
     tiers: [
       {
         tier: 1,
-        name: makeLocalizedText("Iron", "Järn"),
+        name: makeLocalizedText("Wood", "Trä"),
         unlockValue: 1,
-        xpReward: 25,
-        imageKey: null,
+        xpReward: 15,
+        imageKey: "trophy-wood.png",
       },
       {
         tier: 2,
-        name: makeLocalizedText("Bronze", "Brons"),
+        name: makeLocalizedText("Iron", "Järn"),
         unlockValue: 3,
-        xpReward: 50,
-        imageKey: null,
+        xpReward: 25,
+        imageKey: "trophy-iron.png",
       },
       {
         tier: 3,
-        name: makeLocalizedText("Silver", "Silver"),
-        unlockValue: 10,
-        xpReward: 100,
-        imageKey: null,
+        name: makeLocalizedText("Bronze", "Brons"),
+        unlockValue: 6,
+        xpReward: 50,
+        imageKey: "trophy-bronze.png",
       },
       {
         tier: 4,
+        name: makeLocalizedText("Silver", "Silver"),
+        unlockValue: 10,
+        xpReward: 100,
+        imageKey: "trophy-silver.png",
+      },
+      {
+        tier: 5,
         name: makeLocalizedText("Gold", "Guld"),
-        unlockValue: 25,
+        unlockValue: 20,
         xpReward: 200,
-        imageKey: null,
+        imageKey: "trophy-gold.png",
+      },
+      {
+        tier: 6,
+        name: makeLocalizedText("Platinum", "Platina"),
+        unlockValue: 35,
+        xpReward: 350,
+        imageKey: "trophy-platinum.png",
       },
     ],
   },

@@ -87,6 +87,110 @@ body {
   overflow: hidden;
 }
 
+.kwiz-profile-root {
+  width: 100%;
+}
+
+.kwiz-profile-frame {
+  background: linear-gradient(170deg, #f9fbff 0%, #f3f6fc 45%, #edf3f8 100%);
+  border-color: #d5dde8;
+}
+
+.kwiz-profile-hero {
+  background: #ffffff;
+  border-color: #d5dde8;
+}
+
+.kwiz-profile-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #1f4f93;
+  background: #e7f0fb;
+  flex-shrink: 0;
+}
+
+.kwiz-profile-hero-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.kwiz-profile-name {
+  font-size: 20px;
+}
+
+.kwiz-profile-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #d7dce2;
+  overflow: hidden;
+}
+
+.kwiz-profile-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+
+.kwiz-profile-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kwiz-profile-stat-card {
+  background: #ffffff;
+  border-color: #d5dde8;
+}
+
+.kwiz-profile-stat-value {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.kwiz-profile-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kwiz-profile-badge-card {
+  background: #ffffff;
+  border-color: #d5dde8;
+}
+
+.kwiz-profile-badge-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid #f6c453;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff8e1;
+  flex-shrink: 0;
+}
+
+.kwiz-profile-badge-image {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.kwiz-profile-badge-icon.is-discovery {
+  border-color: #93c5fd;
+  background: #ebf5ff;
+}
+
 .kwiz-card-back-min {
   min-height: 320px;
 }
@@ -1062,6 +1166,13 @@ body {
   background: #fdf5df;
   border: 1px solid #f6c453;
   font-size: 18px;
+}
+
+.kwiz-badge-toast-icon-image {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .kwiz-badge-toast-copy {
@@ -2102,6 +2213,19 @@ body {
 }
 
 @media (max-width: 48em) {
+  .kwiz-profile-stats-grid,
+  .kwiz-profile-badge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kwiz-profile-name {
+    font-size: 18px;
+  }
+
+  .kwiz-profile-stat-value {
+    font-size: 24px;
+  }
+
   .kwiz-adventure-shell {
     min-height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px));
     border-radius: 20px;

@@ -85,14 +85,19 @@ function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coord
     }
 
     if (points.length === 1) {
-      map.setView(points[0], 15);
+      map.setView(points[0], 15, { animate: false });
       return;
     }
 
-    map.fitBounds(latLngBounds(points), { padding: [30, 30] });
+    map.fitBounds(latLngBounds(points), { padding: [30, 30], animate: false });
   }, [map, props.current, props.waypoints]);
 
   return null;
+}
+
+function resolveBadgeImageSrc(imageKey: string | null): string | null {
+  if (!imageKey) return null;
+  return `/branding/trophies/${imageKey}`;
 }
 
 function JourneyMap(props: JourneyMapProps): JSX.Element {
@@ -921,8 +926,12 @@ export function PlayQuizPage(): JSX.Element {
   const journeyMode = showGameplay && lockedWaypointIndex === null;
   const cardMode = showGameplay && lockedWaypointIndex !== null && currentQuestion;
   const completionMode = summary?.revealMode ?? "instant";
-  const completionDate = summary?.revealAt ? new Date(summary.revealAt) : null;
-  const countdownMs = completionDate ? Math.max(0, completionDate.getTime() - countdownNow) : 0;
+  const completionDateMs = useMemo(
+    () => (summary?.revealAt ? new Date(summary.revealAt).getTime() : null),
+    [summary?.revealAt]
+  );
+  const completionDate = completionDateMs !== null ? new Date(completionDateMs) : null;
+  const countdownMs = completionDateMs !== null ? Math.max(0, completionDateMs - countdownNow) : 0;
   const countdownDays = Math.floor(countdownMs / (1000 * 60 * 60 * 24));
   const countdownHours = Math.floor((countdownMs / (1000 * 60 * 60)) % 24);
   const countdownMinutes = Math.floor((countdownMs / (1000 * 60)) % 60);
@@ -1045,7 +1054,7 @@ export function PlayQuizPage(): JSX.Element {
   }, [completionReplayKey, showCompletionScreen, xpEarned]);
 
   useEffect(() => {
-    if (!showCompletionScreen || completionMode !== "scheduled" || !completionDate) return;
+    if (!showCompletionScreen || completionMode !== "scheduled" || completionDateMs === null) return;
 
     setCountdownNow(Date.now());
     const interval = window.setInterval(() => {
@@ -1053,7 +1062,7 @@ export function PlayQuizPage(): JSX.Element {
     }, 1000);
 
     return () => window.clearInterval(interval);
-  }, [completionDate, completionMode, showCompletionScreen]);
+  }, [completionDateMs, completionMode, showCompletionScreen]);
 
   useEffect(() => {
     if (!completionToast) return;
@@ -1612,7 +1621,16 @@ export function PlayQuizPage(): JSX.Element {
           className="kwiz-badge-toast"
           onClick={() => setActiveTieredBadgeToast(null)}
         >
-          <span className="kwiz-badge-toast-icon" aria-hidden="true">🏅</span>
+          {resolveBadgeImageSrc(activeTieredBadgeToast.imageKey) ? (
+            <img
+              src={resolveBadgeImageSrc(activeTieredBadgeToast.imageKey) ?? ""}
+              alt=""
+              aria-hidden="true"
+              className="kwiz-badge-toast-icon-image"
+            />
+          ) : (
+            <span className="kwiz-badge-toast-icon" aria-hidden="true">🏅</span>
+          )}
           <span className="kwiz-badge-toast-copy">
             <span className="kwiz-badge-toast-title">{activeTieredBadgeToast.displayName}</span>
             <span className="kwiz-badge-toast-subtitle">+{activeTieredBadgeToast.xpReward} XP</span>

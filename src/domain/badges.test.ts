@@ -27,8 +27,9 @@ describe("evaluateBadgeUnlocks", () => {
     );
 
     const tierEvents = events.filter((event) => event.badgeId === "quiz_veteran");
-    expect(tierEvents.map((event) => event.tier)).toEqual([1, 2, 3]);
-    expect(tierEvents[0]?.displayName).toContain("Iron");
+    expect(tierEvents.map((event) => event.tier)).toEqual([1, 2, 3, 4]);
+    expect(tierEvents[0]?.displayName).toContain("Wood");
+    expect(tierEvents[0]?.imageKey).toBe("trophy-wood.png");
   });
 
   it("returns discovery unlocks from configured trigger keys", () => {
