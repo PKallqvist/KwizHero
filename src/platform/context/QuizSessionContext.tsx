@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 
 export interface ActiveQuizSession {
   quizName: string;
@@ -8,18 +8,22 @@ export interface ActiveQuizSession {
 export interface PlayerAmbientProfile {
   xpTotal: number;
   streakDays: number;
+  firstDiscoverySeen: boolean;
+  discoveredBadgeIds: string[];
 }
 
 const DEFAULT_PROFILE: PlayerAmbientProfile = {
   xpTotal: 1240,
   streakDays: 7,
+  firstDiscoverySeen: false,
+  discoveredBadgeIds: [],
 };
 
 interface QuizSessionContextValue {
   session: ActiveQuizSession | null;
-  setSession: (session: ActiveQuizSession | null) => void;
+  setSession: Dispatch<SetStateAction<ActiveQuizSession | null>>;
   profile: PlayerAmbientProfile;
-  setProfile: (profile: PlayerAmbientProfile) => void;
+  setProfile: Dispatch<SetStateAction<PlayerAmbientProfile>>;
 }
 
 const QuizSessionContext = createContext<QuizSessionContextValue>({

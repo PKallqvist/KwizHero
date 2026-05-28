@@ -12,6 +12,7 @@ import {
   IconPlus,
   IconSettings,
   IconTrophy,
+  IconUser,
   IconX,
 } from "@tabler/icons-react";
 import { QuizSessionProvider, useQuizSession } from "./platform/context/QuizSessionContext";
@@ -34,6 +35,11 @@ const LandingPage = lazy(async () => {
 const UserQuizzesPage = lazy(async () => {
   const module = await import("./app/user/UserQuizzesPage");
   return { default: module.UserQuizzesPage };
+});
+
+const PlayerProfilePage = lazy(async () => {
+  const module = await import("./app/player/PlayerProfilePage");
+  return { default: module.PlayerProfilePage };
 });
 
 function BottomBarAndDrawer(): JSX.Element {
@@ -132,6 +138,10 @@ function BottomBarAndDrawer(): JSX.Element {
                   <IconBooks size={20} className="kwiz-drawer-icon" />
                   <span className="kwiz-drawer-label">{t("nav.myQuizzes")}</span>
                 </button>
+                <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/profile")}>
+                  <IconUser size={20} className="kwiz-drawer-icon" />
+                  <span className="kwiz-drawer-label">{t("nav.profile")}</span>
+                </button>
                 <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/create")}>
                   <IconPlus size={20} className="kwiz-drawer-icon" />
                   <span className="kwiz-drawer-label">{t("nav.creator")}</span>
@@ -228,6 +238,7 @@ export function App(): JSX.Element {
               <Route path="/create" element={<CreateQuizPage />} />
               <Route path="/play/:quizId" element={<PlayQuizPage />} />
               <Route path="/my-quizzes" element={<UserQuizzesPage />} />
+              <Route path="/profile" element={<PlayerProfilePage />} />
             </Routes>
           </Suspense>
         </div>

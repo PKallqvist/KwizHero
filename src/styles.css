@@ -1032,6 +1032,118 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+.kwiz-badge-toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  z-index: 1300;
+  min-width: min(92vw, 420px);
+  max-width: min(92vw, 420px);
+  background: #f4f7fb;
+  border: 1px solid #d4deea;
+  color: #102a43;
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.kwiz-badge-toast-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fdf5df;
+  border: 1px solid #f6c453;
+  font-size: 18px;
+}
+
+.kwiz-badge-toast-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.kwiz-badge-toast-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #102a43;
+}
+
+.kwiz-badge-toast-subtitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f6f46;
+}
+
+.kwiz-discovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: #0e2a5d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.kwiz-discovery-shell {
+  width: min(560px, 100%);
+  text-align: center;
+  color: #d8e9ff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.kwiz-discovery-label {
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  font-size: 12px;
+  color: #4ff4c4;
+  font-weight: 700;
+}
+
+.kwiz-discovery-icon {
+  width: 94px;
+  height: 94px;
+  border-radius: 999px;
+  border: 1px solid rgba(216, 233, 255, 0.35);
+  background: rgba(16, 42, 67, 0.55);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42px;
+}
+
+.kwiz-discovery-title {
+  color: #ffffff;
+}
+
+.kwiz-discovery-text {
+  max-width: 430px;
+  color: #9ec5ff;
+  line-height: 1.5;
+}
+
+.kwiz-discovery-cta {
+  min-width: 160px;
+  background: rgba(16, 42, 67, 0.65);
+  border: 1px solid rgba(216, 233, 255, 0.25);
+}
+
+.kwiz-discovery-hint {
+  font-size: 12px;
+  color: rgba(158, 197, 255, 0.7);
+}
+
 @keyframes kwiz-completion-glow {
   0% { opacity: 0; }
   60% { opacity: 0.15; }

@@ -19,10 +19,12 @@ import {
 import { signInAnonymously } from "firebase/auth";
 import { getFirebaseServices } from "./firebase";
 import { routeDistanceMeters } from "../map/geolocation";
+import type { BadgeProgressState, BadgeUnlockEvent } from "../../domain/badges";
 import type {
   AnswerResult,
   FirstPlayable,
   LeaderboardEntry,
+  PlayerEarnedBadge,
   QuestionOrderMode,
   QuizDraftInput,
   QuizListItem,
@@ -41,6 +43,164 @@ async function getAnonymousUid(): Promise<string> {
 
 export async function getCurrentUserUid(): Promise<string> {
   return getAnonymousUid();
+}
+
+export interface PlayerBadgeProgressSnapshot extends BadgeProgressState {
+  firstDiscoverySeen: boolean;
+  firstDiscoveryProfileLabelSeen: boolean;
+}
+
+function buildBadgeUnlockId(event: BadgeUnlockEvent): string {
+  return event.type === "discovery" ? `discovery_${event.badgeId}` : `tiered_${event.badgeId}_${event.tier ?? 0}`;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnapshot> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const profileDoc = await getDoc(doc(db, "playerProfiles", uid));
+
+  const profileData = profileDoc.data() as {
+    quizzesCompleted?: number;
+    triggeredEventKeys?: unknown;
+    earnedTierByBadgeId?: Record<string, unknown>;
+    earnedDiscoveryBadgeIds?: unknown;
+    firstDiscoverySeen?: boolean;
+    firstDiscoveryProfileLabelSeen?: boolean;
+  } | undefined;
+
+  return {
+    quizzesCompleted: typeof profileData?.quizzesCompleted === "number" ? profileData.quizzesCompleted : 0,
+    triggeredEventKeys: normalizeStringArray(profileData?.triggeredEventKeys),
+    earnedTierByBadgeId: Object.fromEntries(
+      Object.entries(profileData?.earnedTierByBadgeId ?? {}).flatMap(([badgeId, tier]) => {
+        const tierNumber = typeof tier === "number" ? tier : Number(tier);
+        return Number.isFinite(tierNumber) && tierNumber > 0 ? [[badgeId, tierNumber]] : [];
+      })
+    ),
+    earnedDiscoveryBadgeIds: normalizeStringArray(profileData?.earnedDiscoveryBadgeIds),
+    firstDiscoverySeen: profileData?.firstDiscoverySeen ?? false,
+    firstDiscoveryProfileLabelSeen: profileData?.firstDiscoveryProfileLabelSeen ?? false,
+  };
+}
+
+export async function savePlayerBadgeProgress(progress: PlayerBadgeProgressSnapshot): Promise<void> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  await setDoc(
+    doc(db, "playerProfiles", uid),
+    {
+      quizzesCompleted: progress.quizzesCompleted,
+      triggeredEventKeys: [...new Set(progress.triggeredEventKeys)],
+      earnedTierByBadgeId: progress.earnedTierByBadgeId,
+      earnedDiscoveryBadgeIds: [...new Set(progress.earnedDiscoveryBadgeIds)],
+      firstDiscoverySeen: progress.firstDiscoverySeen,
+      firstDiscoveryProfileLabelSeen: progress.firstDiscoveryProfileLabelSeen,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function storePlayerBadgeUnlocks(events: BadgeUnlockEvent[]): Promise<void> {
+  if (events.length === 0) return;
+
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const progress = await getPlayerBadgeProgress();
+
+  await Promise.all(
+    events.map((event) =>
+      setDoc(
+        doc(db, "playerProfiles", uid, "earnedBadges", buildBadgeUnlockId(event)),
+        {
+          badgeId: event.badgeId,
+          type: event.type,
+          tier: event.tier,
+          xpReward: event.xpReward,
+          displayName: event.displayName,
+          flavourText: event.flavourText,
+          imageKey: event.imageKey,
+          earnedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      )
+    )
+  );
+
+  const nextProgress: PlayerBadgeProgressSnapshot = {
+    ...progress,
+    firstDiscoverySeen: progress.firstDiscoverySeen,
+    firstDiscoveryProfileLabelSeen: progress.firstDiscoveryProfileLabelSeen,
+    earnedTierByBadgeId: {
+      ...progress.earnedTierByBadgeId,
+      ...Object.fromEntries(
+        events
+          .filter((event) => event.type === "tiered" && event.tier !== null)
+          .map((event) => [event.badgeId, event.tier as number])
+      ),
+    },
+    earnedDiscoveryBadgeIds: [
+      ...new Set([
+        ...progress.earnedDiscoveryBadgeIds,
+        ...events.filter((event) => event.type === "discovery").map((event) => event.badgeId),
+      ]),
+    ],
+  };
+
+  await savePlayerBadgeProgress(nextProgress);
+}
+
+export async function markFirstDiscoverySeen(): Promise<void> {
+  const progress = await getPlayerBadgeProgress();
+  if (progress.firstDiscoverySeen) return;
+  await savePlayerBadgeProgress({
+    ...progress,
+    firstDiscoverySeen: true,
+  });
+}
+
+export async function markFirstDiscoveryProfileLabelSeen(): Promise<void> {
+  const progress = await getPlayerBadgeProgress();
+  if (progress.firstDiscoveryProfileLabelSeen) return;
+  await savePlayerBadgeProgress({
+    ...progress,
+    firstDiscoveryProfileLabelSeen: true,
+  });
+}
+
+export async function getPlayerEarnedBadges(): Promise<PlayerEarnedBadge[]> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const badgesSnapshot = await getDocs(
+    query(collection(db, `playerProfiles/${uid}/earnedBadges`), orderBy("earnedAt", "desc"))
+  );
+
+  return badgesSnapshot.docs.map((badgeDoc) => {
+    const data = badgeDoc.data() as {
+      badgeId?: string;
+      type?: "tiered" | "discovery";
+      tier?: number | null;
+      xpReward?: number;
+      imageKey?: string | null;
+      earnedAt?: unknown;
+    };
+
+    return {
+      id: badgeDoc.id,
+      badgeId: data.badgeId ?? "",
+      type: data.type ?? "tiered",
+      tier: typeof data.tier === "number" ? data.tier : null,
+      xpReward: typeof data.xpReward === "number" ? data.xpReward : 0,
+      imageKey: typeof data.imageKey === "string" ? data.imageKey : null,
+      earnedAt: toIsoOrNull(data.earnedAt),
+    };
+  });
 }
 
 export interface CreatedQuiz {

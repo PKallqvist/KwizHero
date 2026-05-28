@@ -150,3 +150,13 @@ export interface AnswerResult {
   pointsAwarded: number;
   score: number;
 }
+
+export interface PlayerEarnedBadge {
+  id: string;
+  badgeId: string;
+  type: "tiered" | "discovery";
+  tier: number | null;
+  xpReward: number;
+  imageKey: string | null;
+  earnedAt: string | null;
+}

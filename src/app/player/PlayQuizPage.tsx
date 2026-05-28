@@ -42,16 +42,26 @@ import { firebaseConfigError } from "../../platform/firebase/firebase";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import {
   getCurrentUserUid,
+  getPlayerBadgeProgress,
   getQuizWalk,
   getQuizSummary,
+  markFirstDiscoverySeen,
+  savePlayerBadgeProgress,
   startSession,
+  storePlayerBadgeUnlocks,
   submitFirstAnswer,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, getCurrentCoordinates, routeDistanceMeters } from "../../platform/map/geolocation";
+import { evaluateBadgeUnlocks, type BadgeUnlockEvent, type BadgeLocale } from "../../domain/badges";
 import type { AnswerResult, QuizSummary, QuizWalk, QuizWalkQuestion, QuizWalkWaypoint } from "../../domain/types";
 import type { Coordinates } from "../../platform/map/geolocation";
 
 type QuestionCardPhase = "back" | "pre_countdown" | "front";
+
+interface DiscoveryQueueItem {
+  event: BadgeUnlockEvent;
+  showFirstHint: boolean;
+}
 
 interface JourneyMapProps {
   waypoints: QuizWalkWaypoint[];
@@ -180,7 +190,7 @@ function JourneyMap(props: JourneyMapProps): JSX.Element {
 }
 
 export function PlayQuizPage(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { setSession, setProfile } = useQuizSession();
   const { quizId = "" } = useParams();
@@ -218,6 +228,10 @@ export function PlayQuizPage(): JSX.Element {
   const [currentScore, setCurrentScore] = useState(0);
   const [completionRevealOpen, setCompletionRevealOpen] = useState(false);
   const [completionToast, setCompletionToast] = useState<string | null>(null);
+  const [tieredBadgeQueue, setTieredBadgeQueue] = useState<BadgeUnlockEvent[]>([]);
+  const [activeTieredBadgeToast, setActiveTieredBadgeToast] = useState<BadgeUnlockEvent | null>(null);
+  const [discoveryBadgeQueue, setDiscoveryBadgeQueue] = useState<DiscoveryQueueItem[]>([]);
+  const [activeDiscoveryBadge, setActiveDiscoveryBadge] = useState<DiscoveryQueueItem | null>(null);
   const [animatedXpEarned, setAnimatedXpEarned] = useState(0);
   const [completionReplayKey, setCompletionReplayKey] = useState(0);
   const [countdownNow, setCountdownNow] = useState(Date.now());
@@ -740,6 +754,80 @@ export function PlayQuizPage(): JSX.Element {
     );
   }
 
+  function resolveBadgeLocale(): BadgeLocale {
+    const language = i18n.resolvedLanguage ?? i18n.language;
+    return language.startsWith("sv") ? "sv" : "en";
+  }
+
+  function resolveCompletionTriggerEventKeys(completedAt: Date): string[] {
+    const keys: string[] = [];
+    const hour = completedAt.getHours();
+    if (hour <= 4 || hour >= 23) {
+      keys.push("dead_of_night");
+    }
+    return keys;
+  }
+
+  async function queueBadgeUnlocksForCompletion(): Promise<void> {
+    const progress = await getPlayerBadgeProgress();
+    const completionTriggerKeys = resolveCompletionTriggerEventKeys(new Date());
+    const nextProgress = {
+      ...progress,
+      quizzesCompleted: progress.quizzesCompleted + 1,
+      triggeredEventKeys: [...new Set([...progress.triggeredEventKeys, ...completionTriggerKeys])],
+    };
+
+    await savePlayerBadgeProgress(nextProgress);
+
+    const unlockedEvents = evaluateBadgeUnlocks(nextProgress, resolveBadgeLocale());
+    if (unlockedEvents.length === 0) {
+      return;
+    }
+
+    await storePlayerBadgeUnlocks(unlockedEvents);
+
+    const tieredEvents = unlockedEvents.filter((event) => event.type === "tiered");
+    const discoveryEvents = unlockedEvents.filter((event) => event.type === "discovery");
+
+    if (tieredEvents.length > 0) {
+      setTieredBadgeQueue((previous) => [...previous, ...tieredEvents]);
+    }
+
+    if (discoveryEvents.length > 0) {
+      const isFirstDiscoveryEver = !progress.firstDiscoverySeen && progress.earnedDiscoveryBadgeIds.length === 0;
+      setDiscoveryBadgeQueue((previous) => [
+        ...previous,
+        ...discoveryEvents.map((event, index) => ({
+          event,
+          showFirstHint: isFirstDiscoveryEver && index === 0,
+        })),
+      ]);
+
+      setProfile((previous) => ({
+        ...previous,
+        discoveredBadgeIds: [...new Set([...previous.discoveredBadgeIds, ...discoveryEvents.map((event) => event.badgeId)])],
+      }));
+    }
+  }
+
+  async function dismissActiveDiscoveryBadge(): Promise<void> {
+    if (!activeDiscoveryBadge) return;
+    const shouldMarkFirstSeen = activeDiscoveryBadge.showFirstHint;
+    setActiveDiscoveryBadge(null);
+
+    if (!shouldMarkFirstSeen) return;
+
+    try {
+      await markFirstDiscoverySeen();
+      setProfile((previous) => ({
+        ...previous,
+        firstDiscoverySeen: true,
+      }));
+    } catch {
+      // keep gameplay running even if profile marker write fails
+    }
+  }
+
   async function submitAnswer(): Promise<void> {
     if (debugMode || !sessionId || !quizWalk || lockedWaypointIndex === null || !currentQuestion) return;
     if (questionTimedOut) {
@@ -801,6 +889,11 @@ export function PlayQuizPage(): JSX.Element {
 
       const nextWaypointIndex = getNextWaypointIndex(nextAnswered);
       if (nextWaypointIndex === null) {
+        try {
+          await queueBadgeUnlocksForCompletion();
+        } catch {
+          // badge unlock processing should never block quiz completion
+        }
         setSessionComplete(true);
         setLockedWaypointIndex(null);
         return;
@@ -898,11 +991,34 @@ export function PlayQuizPage(): JSX.Element {
 
   useEffect(() => {
     if (!showCompletionScreen) return;
-    setProfile({
+    setProfile((previous) => ({
+      ...previous,
       xpTotal: updatedXpTotal,
       streakDays: updatedStreak,
-    });
+    }));
   }, [setProfile, showCompletionScreen, updatedStreak, updatedXpTotal]);
+
+  useEffect(() => {
+    if (activeTieredBadgeToast || tieredBadgeQueue.length === 0) return;
+    const [nextToast, ...remaining] = tieredBadgeQueue;
+    setActiveTieredBadgeToast(nextToast ?? null);
+    setTieredBadgeQueue(remaining);
+  }, [activeTieredBadgeToast, tieredBadgeQueue]);
+
+  useEffect(() => {
+    if (!activeTieredBadgeToast) return;
+    const timeout = window.setTimeout(() => {
+      setActiveTieredBadgeToast(null);
+    }, 3000);
+    return () => window.clearTimeout(timeout);
+  }, [activeTieredBadgeToast]);
+
+  useEffect(() => {
+    if (activeDiscoveryBadge || discoveryBadgeQueue.length === 0) return;
+    const [nextDiscovery, ...remaining] = discoveryBadgeQueue;
+    setActiveDiscoveryBadge(nextDiscovery ?? null);
+    setDiscoveryBadgeQueue(remaining);
+  }, [activeDiscoveryBadge, discoveryBadgeQueue]);
 
   useEffect(() => {
     if (!showCompletionScreen) return;
@@ -1490,6 +1606,35 @@ export function PlayQuizPage(): JSX.Element {
 
       </Stack>
       {completionToast ? <div className="kwiz-completion-toast">{completionToast}</div> : null}
+      {activeTieredBadgeToast ? (
+        <button
+          type="button"
+          className="kwiz-badge-toast"
+          onClick={() => setActiveTieredBadgeToast(null)}
+        >
+          <span className="kwiz-badge-toast-icon" aria-hidden="true">🏅</span>
+          <span className="kwiz-badge-toast-copy">
+            <span className="kwiz-badge-toast-title">{activeTieredBadgeToast.displayName}</span>
+            <span className="kwiz-badge-toast-subtitle">+{activeTieredBadgeToast.xpReward} XP</span>
+          </span>
+        </button>
+      ) : null}
+      {activeDiscoveryBadge ? (
+        <div className="kwiz-discovery-overlay" role="dialog" aria-modal="true">
+          <div className="kwiz-discovery-shell">
+            <Text className="kwiz-discovery-label">{t("player.discoveryLabel")}</Text>
+            <div className="kwiz-discovery-icon" aria-hidden="true">🌙</div>
+            <Title order={2} className="kwiz-discovery-title">{activeDiscoveryBadge.event.displayName}</Title>
+            <Text className="kwiz-discovery-text">{activeDiscoveryBadge.event.flavourText}</Text>
+            <Button className="kwiz-discovery-cta" onClick={() => void dismissActiveDiscoveryBadge()}>
+              {t("player.badgeKeepGoing")}
+            </Button>
+            {activeDiscoveryBadge.showFirstHint ? (
+              <Text className="kwiz-discovery-hint">{t("player.discoveryFirstHint")}</Text>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </Paper>
   );
 }
