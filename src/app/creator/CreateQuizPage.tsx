@@ -520,7 +520,7 @@ export function CreateQuizPage(): JSX.Element {
   const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
   const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
-  const focusWaypointNameAfterAddRef = useRef(false);
+  const focusWaypointNameAfterAddRef = useRef<number | null>(null);
   const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
@@ -731,7 +731,6 @@ export function CreateQuizPage(): JSX.Element {
     setDrawingLegPoints([]);
     setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
-    focusWaypointNameAfterAddRef.current = true;
     let nextWaypointIndex = 0;
     setInput((prev) => {
       nextWaypointIndex = prev.waypoints.length;
@@ -746,6 +745,7 @@ export function CreateQuizPage(): JSX.Element {
       ];
       return { ...prev, waypoints };
     });
+    focusWaypointNameAfterAddRef.current = nextWaypointIndex;
     setSelectedWaypointIndex(nextWaypointIndex);
     setSelectedQuestionIndex(0);
   }
@@ -1147,8 +1147,9 @@ export function CreateQuizPage(): JSX.Element {
   }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
 
   useEffect(() => {
-    if (!currentWaypoint || !focusWaypointNameAfterAddRef.current) return;
-    focusWaypointNameAfterAddRef.current = false;
+    const focusTargetIndex = focusWaypointNameAfterAddRef.current;
+    if (focusTargetIndex === null || selectedWaypointIndex !== focusTargetIndex || !currentWaypoint) return;
+    focusWaypointNameAfterAddRef.current = null;
     requestAnimationFrame(() => {
       waypointNameInputRef.current?.focus();
       waypointNameInputRef.current?.select();
@@ -2177,7 +2178,12 @@ export function CreateQuizPage(): JSX.Element {
                                                 checked={choiceDraftIsCorrect}
                                                 onChange={(event) => setChoiceDraftIsCorrect(event.currentTarget.checked)}
                                               />
-                                              <ActionIcon variant="subtle" color="teal" onClick={appendChoiceFromDraft}>
+                                              <ActionIcon
+                                                variant="subtle"
+                                                color="teal"
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={appendChoiceFromDraft}
+                                              >
                                                 <IconPlus size={14} />
                                               </ActionIcon>
                                             </Group>
@@ -2191,7 +2197,9 @@ export function CreateQuizPage(): JSX.Element {
                                               placeholder={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + currentQuestion.choices.length) })}
                                               onFocus={setPreviewEditingFromFocus}
                                               onBlur={() => {
-                                                if (choiceDraft.trim().length === 0) {
+                                                if (choiceDraft.trim().length > 0) {
+                                                  persistChoiceDraft({ keepDraftVisible: true, refocus: false });
+                                                } else {
                                                   setChoiceDraftVisible(false);
                                                 }
                                                 clearPreviewEditingFromBlur();
@@ -2215,10 +2223,15 @@ export function CreateQuizPage(): JSX.Element {
                                           style={previewChoiceCardStyle(currentQuestion.choices.length)}
                                         >
                                           <Stack justify="center" align="center" className="kwiz-creator-choice-add-shell">
-                                            <ActionIcon variant="subtle" color="teal" onClick={() => {
-                                              setChoiceDraftVisible(true);
-                                              requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
-                                            }}>
+                                            <ActionIcon
+                                              variant="subtle"
+                                              color="teal"
+                                              onMouseDown={(event) => event.preventDefault()}
+                                              onClick={() => {
+                                                setChoiceDraftVisible(true);
+                                                requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
+                                              }}
+                                            >
                                               <IconPlus size={18} />
                                             </ActionIcon>
                                           </Stack>

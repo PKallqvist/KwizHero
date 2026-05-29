@@ -19,6 +19,7 @@ import {
 import { signInAnonymously } from "firebase/auth";
 import { getFirebaseServices } from "./firebase";
 import { routeDistanceMeters } from "../map/geolocation";
+import type { Coordinates } from "../map/geolocation";
 import type { BadgeProgressState, BadgeUnlockEvent } from "../../domain/badges";
 import type {
   AnswerResult,
@@ -212,6 +213,33 @@ export interface EditableQuizDraft {
   quizId: string;
   input: QuizDraftInput;
   status: "draft" | "published";
+}
+
+export interface PublishedQuizDiscoveryItem {
+  id: string;
+  title: string;
+  description: string;
+  status: "published";
+  waypointCount: number;
+  questionCount: number;
+  routeDistanceKm: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  waypointCoordinates: Coordinates[];
+}
+
+export interface PlayerFavoriteQuizItem {
+  quizId: string;
+  favoritedAt: string | null;
+}
+
+export interface PlayerQuizHistoryItem {
+  sessionId: string;
+  quizId: string;
+  status: "active" | "completed";
+  score: number;
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 function randomKey(): string {
@@ -615,6 +643,144 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
     const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
     return bTime - aTime;
   });
+}
+
+async function loadQuizDiscoveryItem(quizDoc: { id: string; data: () => unknown }): Promise<PublishedQuizDiscoveryItem> {
+  const { db } = getFirebaseServices();
+  const data = quizDoc.data() as {
+    title?: string;
+    description?: string;
+    status?: "draft" | "published";
+    createdAt?: unknown;
+    updatedAt?: unknown;
+  };
+
+  const waypointSnapshot = await getDocs(
+    query(collection(db, `quizzes/${quizDoc.id}/waypoints`), orderBy("order", "asc"))
+  );
+
+  const waypointCoordinates: Coordinates[] = [];
+  let questionCount = 0;
+  for (const waypointDoc of waypointSnapshot.docs) {
+    const waypointData = waypointDoc.data() as { lat?: number; lng?: number };
+    if (typeof waypointData.lat === "number" && typeof waypointData.lng === "number") {
+      waypointCoordinates.push({ lat: waypointData.lat, lng: waypointData.lng });
+    }
+
+    const questionSnapshot = await getDocs(collection(db, `quizzes/${quizDoc.id}/waypoints/${waypointDoc.id}/questions`));
+    questionCount += questionSnapshot.size;
+  }
+
+  return {
+    id: quizDoc.id,
+    title: data.title ?? "Untitled quiz",
+    description: data.description ?? "",
+    status: "published",
+    waypointCount: waypointSnapshot.size,
+    questionCount,
+    routeDistanceKm: routeDistanceMeters(waypointCoordinates) / 1000,
+    createdAt: toIsoOrNull(data.createdAt),
+    updatedAt: toIsoOrNull(data.updatedAt),
+    waypointCoordinates,
+  };
+}
+
+export async function getPublishedQuizDiscoveryItems(): Promise<PublishedQuizDiscoveryItem[]> {
+  const { db } = getFirebaseServices();
+  const quizzesQuery = query(collection(db, "quizzes"), where("status", "==", "published"));
+  const snapshot = await getDocs(quizzesQuery);
+
+  const quizzes = await Promise.all(snapshot.docs.map((quizDoc) => loadQuizDiscoveryItem(quizDoc)));
+  return quizzes.sort((a, b) => {
+    const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return bTime - aTime;
+  });
+}
+
+export async function getPlayerFavoriteQuizzes(): Promise<PlayerFavoriteQuizItem[]> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const snapshot = await getDocs(
+    query(collection(db, `playerProfiles/${uid}/favoriteQuizzes`), orderBy("favoritedAt", "desc"))
+  );
+
+  return snapshot.docs.map((favoriteDoc) => {
+    const data = favoriteDoc.data() as {
+      quizId?: string;
+      favoritedAt?: unknown;
+    };
+
+    return {
+      quizId: data.quizId ?? favoriteDoc.id,
+      favoritedAt: toIsoOrNull(data.favoritedAt),
+    };
+  });
+}
+
+export async function setPlayerQuizFavorite(quizId: string, favorited: boolean): Promise<void> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const favoriteRef = doc(db, "playerProfiles", uid, "favoriteQuizzes", quizId);
+
+  if (!favorited) {
+    await deleteDoc(favoriteRef);
+    return;
+  }
+
+  await setDoc(
+    favoriteRef,
+    {
+      quizId,
+      favoritedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function getPlayerQuizHistory(): Promise<PlayerQuizHistoryItem[]> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const snapshot = await getDocs(query(collection(db, "participantSessions"), where("anonymousUid", "==", uid)));
+
+  const latestByQuiz = new Map<string, PlayerQuizHistoryItem & { sortTime: number }>();
+
+  snapshot.docs.forEach((sessionDoc) => {
+    const data = sessionDoc.data() as {
+      quizId?: string;
+      status?: "active" | "completed";
+      score?: number;
+      startedAt?: unknown;
+      completedAt?: unknown;
+    };
+
+    const quizId = data.quizId;
+    if (typeof quizId !== "string" || quizId.trim().length === 0) {
+      return;
+    }
+
+    const startedAt = toIsoOrNull(data.startedAt);
+    const completedAt = toIsoOrNull(data.completedAt);
+    const sortTime = Math.max(startedAt ? Date.parse(startedAt) : 0, completedAt ? Date.parse(completedAt) : 0);
+
+    const nextEntry: PlayerQuizHistoryItem & { sortTime: number } = {
+      sessionId: sessionDoc.id,
+      quizId,
+      status: data.status === "completed" ? "completed" : "active",
+      score: typeof data.score === "number" ? data.score : 0,
+      startedAt,
+      completedAt,
+      sortTime,
+    };
+
+    const current = latestByQuiz.get(quizId);
+    if (!current || nextEntry.sortTime >= current.sortTime) {
+      latestByQuiz.set(quizId, nextEntry);
+    }
+  });
+
+  return [...latestByQuiz.values()].sort((a, b) => b.sortTime - a.sortTime).map(({ sortTime, ...entry }) => entry);
 }
 
 export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promise<LeaderboardEntry[]> {

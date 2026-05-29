@@ -39,6 +39,8 @@ export function LandingPage(): JSX.Element {
   }, []);
 
   const isReturningPlayer = quizzes.length > 0;
+  const publishedQuizzes = quizzes.filter((quiz) => quiz.status === "published");
+  const playCtaTarget = "/quizzes";
 
   if (loading) {
     return (
@@ -95,7 +97,7 @@ export function LandingPage(): JSX.Element {
           )}
 
           <div className="landing-cta-stack">
-            <Button component={Link} to="/play/demo" className="landing-cta-primary">
+            <Button component={Link} to={playCtaTarget} className="landing-cta-primary">
               {t("landing.playCta")}
             </Button>
             <Button component={Link} to="/create" className="landing-cta-secondary" variant="outline">
@@ -103,11 +105,11 @@ export function LandingPage(): JSX.Element {
             </Button>
           </div>
 
-          {isReturningPlayer ? (
+          {isReturningPlayer && publishedQuizzes.length > 0 ? (
             <div className="landing-my-quizzes">
               <Text className="landing-my-quizzes-label">{t("landing.myQuizzesLabel")}</Text>
               <div className="landing-my-quizzes-list">
-                {quizzes.map((quiz) => (
+                {publishedQuizzes.map((quiz) => (
                   <Link key={quiz.id} to={`/play/${quiz.id}`} className="landing-quiz-card">
                     <div>
                       <Text className="landing-quiz-title">{quiz.title}</Text>

@@ -26,6 +26,11 @@ const PlayQuizPage = lazy(async () => {
   return { default: module.PlayQuizPage };
 });
 
+const QuizBrowsePage = lazy(async () => {
+  const module = await import("./app/player/QuizBrowsePage");
+  return { default: module.QuizBrowsePage };
+});
+
 const LandingPage = lazy(async () => {
   const module = await import("./app/landing/LandingPage");
   return { default: module.LandingPage };
@@ -161,6 +166,10 @@ function BottomBarAndDrawer(): JSX.Element {
                   <IconBooks size={20} className="kwiz-drawer-icon" />
                   <span className="kwiz-drawer-label">{t("nav.myQuizzes")}</span>
                 </button>
+                <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/quizzes")}>
+                  <IconMapPin size={20} className="kwiz-drawer-icon" />
+                  <span className="kwiz-drawer-label">{t("nav.play")}</span>
+                </button>
                 <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/profile")}>
                   <IconUser size={20} className="kwiz-drawer-icon" />
                   <span className="kwiz-drawer-label">{t("nav.profile")}</span>
@@ -173,13 +182,6 @@ function BottomBarAndDrawer(): JSX.Element {
                   <IconTrophy size={20} className="kwiz-drawer-icon" />
                   <div>
                     <span className="kwiz-drawer-label">{t("player.leaderboardItem")}</span>
-                    <span className="kwiz-drawer-sublabel">{t("player.comingSoon")}</span>
-                  </div>
-                </div>
-                <div className="kwiz-drawer-item is-coming-soon" aria-disabled="true">
-                  <IconMapPin size={20} className="kwiz-drawer-icon" />
-                  <div>
-                    <span className="kwiz-drawer-label">{t("player.quizzesNearby")}</span>
                     <span className="kwiz-drawer-sublabel">{t("player.comingSoon")}</span>
                   </div>
                 </div>
@@ -259,6 +261,7 @@ export function App(): JSX.Element {
             <Routes>
               <Route path="/" element={<LandingPage />} />
               <Route path="/create" element={<CreateQuizPage />} />
+              <Route path="/quizzes" element={<QuizBrowsePage />} />
               <Route path="/play/:quizId" element={<PlayQuizPage />} />
               <Route path="/my-quizzes" element={<UserQuizzesPage />} />
               <Route path="/profile" element={<PlayerProfilePage />} />

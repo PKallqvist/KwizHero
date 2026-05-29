@@ -29,7 +29,6 @@ import {
   IconAlertCircle,
   IconCheck,
   IconChevronLeft,
-  IconChevronRight,
   IconCurrentLocation,
   IconFlag,
   IconPlayerSkipForward,
@@ -472,6 +471,11 @@ export function PlayQuizPage(): JSX.Element {
         setError(t("player.noQuiz"));
         return;
       }
+      const creatorUid = currentUserUid ?? (await getCurrentUserUid());
+      const isDraftOwnedByCreator = q.status !== "published" && q.creatorUid !== undefined && q.creatorUid === creatorUid;
+      if (q.status !== "published" && !debugMode && !isDraftOwnedByCreator) {
+        setError(t("player.errorDraftUnavailable"));
+      }
 
       const walk = await getQuizWalk(quizId);
       if (!walk) {
@@ -497,7 +501,7 @@ export function PlayQuizPage(): JSX.Element {
     loadQuiz().catch(() => {
       // loadQuiz already pushes user-visible error state
     });
-  }, [quizId]);
+  }, [currentUserUid, quizId, t, debugMode]);
 
   async function joinQuiz(): Promise<void> {
     if (debugMode) {
@@ -507,6 +511,10 @@ export function PlayQuizPage(): JSX.Element {
 
     if (!summary) {
       setError(t("player.errorLoadFirst"));
+      return;
+    }
+    if (summary.status !== "published") {
+      setError(t("player.errorDraftUnavailable"));
       return;
     }
     if (!nickname.trim()) {
@@ -997,7 +1005,7 @@ export function PlayQuizPage(): JSX.Element {
       setActiveWaypointIndex(nextWaypointIndex);
       setActiveQuestionIndex(Math.max(0, firstQuestionIdx));
       setLockedWaypointIndex(null);
-      setPendingQuestionResume(true);
+      setPendingQuestionResume(false);
       setWaypointClearedState({
         clearedWaypointTitle: lockedWaypoint.title,
         nextWaypointTitle: nextWaypoint?.title ?? "",
@@ -1242,7 +1250,7 @@ export function PlayQuizPage(): JSX.Element {
             )}
 
             {summary && !summary.isAnonymous ? (
-              <button type="button" className="kwiz-join-organizer-row" onClick={() => {}}>
+              <div className="kwiz-join-organizer-row">
                 {summary.organizerAvatarUrl ? (
                   <img src={summary.organizerAvatarUrl} alt={organizerDisplayName} className="kwiz-join-organizer-avatar-image" />
                 ) : (
@@ -1254,8 +1262,7 @@ export function PlayQuizPage(): JSX.Element {
                     {organizerDisplayName}
                   </Text>
                 </div>
-                <IconChevronRight size={16} className="kwiz-join-organizer-chevron" />
-              </button>
+              </div>
             ) : null}
 
             {summary ? (
@@ -1267,7 +1274,12 @@ export function PlayQuizPage(): JSX.Element {
                   onChange={(e) => setNickname(e.currentTarget.value)}
                   classNames={{ label: "kwiz-join-input-label", input: "kwiz-join-input-field" }}
                 />
-                <Button className="kwiz-join-submit" onClick={joinQuiz} leftSection={<IconShieldCheck size={18} />}>
+                <Button
+                  className="kwiz-join-submit"
+                  onClick={joinQuiz}
+                  leftSection={<IconShieldCheck size={18} />}
+                  disabled={summary.status !== "published"}
+                >
                   {t("player.joinTitle")}
                 </Button>
                 {isCreator ? (

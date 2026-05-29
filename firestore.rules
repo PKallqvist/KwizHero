@@ -79,6 +79,10 @@ service cloud.firestore {
     match /playerProfiles/{uid} {
       allow read, create, update: if request.auth != null && request.auth.uid == uid;
 
+      match /favoriteQuizzes/{quizId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == uid;
+      }
+
       match /earnedBadges/{badgeDocId} {
         allow read, create, update: if request.auth != null && request.auth.uid == uid;
       }
