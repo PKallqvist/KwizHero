@@ -10,7 +10,6 @@ import {
   IconMenu2,
   IconMoonStars,
   IconPlus,
-  IconSettings,
   IconTrophy,
   IconUser,
   IconX,
@@ -112,10 +111,34 @@ function BottomBarAndDrawer(): JSX.Element {
 
             {quizActive ? (
               <>
-                <button type="button" className="kwiz-drawer-item" onClick={closeDrawer}>
-                  <IconSettings size={20} className="kwiz-drawer-icon" />
-                  <span className="kwiz-drawer-label">{t("player.settings")}</span>
-                </button>
+                <div className="kwiz-drawer-toggle-row">
+                  <div className="kwiz-drawer-toggle-left">
+                    <IconLanguage size={20} className="kwiz-drawer-icon" />
+                    <span className="kwiz-drawer-label">
+                      {i18n.language === "en" ? "Svenska" : "English"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`kwiz-toggle-pill${i18n.language === "sv" ? " is-on" : ""}`}
+                    onClick={() => i18n.changeLanguage(i18n.language === "en" ? "sv" : "en")}
+                    aria-label={t("player.toggleLanguage")}
+                    aria-pressed={i18n.language === "sv"}
+                  />
+                </div>
+                <div className="kwiz-drawer-toggle-row">
+                  <div className="kwiz-drawer-toggle-left">
+                    <IconMoonStars size={20} className="kwiz-drawer-icon" />
+                    <span className="kwiz-drawer-label">{t("player.darkMode")}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`kwiz-toggle-pill${colorScheme === "dark" ? " is-on" : ""}`}
+                    onClick={() => setColorScheme(colorScheme === "dark" ? "light" : "dark")}
+                    aria-label={t("player.toggleDarkMode")}
+                    aria-pressed={colorScheme === "dark"}
+                  />
+                </div>
                 <button
                   type="button"
                   className="kwiz-drawer-item is-danger"

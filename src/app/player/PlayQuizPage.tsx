@@ -63,6 +63,13 @@ interface DiscoveryQueueItem {
   showFirstHint: boolean;
 }
 
+interface WaypointClearedState {
+  clearedWaypointTitle: string;
+  nextWaypointTitle: string;
+  result: AnswerResult;
+  requiresContinue: boolean;
+}
+
 interface JourneyMapProps {
   waypoints: QuizWalkWaypoint[];
   targetWaypointIndex: number;
@@ -239,6 +246,8 @@ export function PlayQuizPage(): JSX.Element {
   const [playerCoordinates, setPlayerCoordinates] = useState<Coordinates | null>(null);
   const [locationRefreshing, setLocationRefreshing] = useState(false);
   const [mockGpsWalkEnabled, setMockGpsWalkEnabled] = useState(false);
+  const [pendingQuestionResume, setPendingQuestionResume] = useState(false);
+  const [waypointClearedState, setWaypointClearedState] = useState<WaypointClearedState | null>(null);
   const [cardPhase, setCardPhase] = useState<QuestionCardPhase>("back");
   const [preRevealCountdown, setPreRevealCountdown] = useState<number | null>(null);
 
@@ -542,6 +551,8 @@ export function PlayQuizPage(): JSX.Element {
     setPreRevealCountdown(null);
     setAnsweredQuestionIds([]);
     setMockGpsWalkEnabled(false);
+    setPendingQuestionResume(false);
+    setWaypointClearedState(null);
     setCorrectAnswersCount(0);
     setCurrentScore(0);
     setCompletionRevealOpen(false);
@@ -584,6 +595,8 @@ export function PlayQuizPage(): JSX.Element {
     setPreRevealCountdown(null);
     setAnsweredQuestionIds([]);
     setMockGpsWalkEnabled(true);
+    setPendingQuestionResume(false);
+    setWaypointClearedState(null);
     setCorrectAnswersCount(0);
     setCurrentScore(0);
     setCompletionRevealOpen(false);
@@ -664,11 +677,36 @@ export function PlayQuizPage(): JSX.Element {
 
   useEffect(() => {
     if (!currentWaypoint || lockedWaypointIndex !== null || distanceToWaypoint === null || sessionComplete) return;
+    if (pendingQuestionResume) return;
+    if (waypointClearedState) return;
     if (distanceToWaypoint > getGateRadiusMeters()) return;
     setLockedWaypointIndex(activeWaypointIndex);
     setCardPhase("back");
     setError(null);
-  }, [activeWaypointIndex, currentWaypoint, distanceToWaypoint, lockedWaypointIndex, sessionComplete]);
+  }, [
+    activeWaypointIndex,
+    currentWaypoint,
+    distanceToWaypoint,
+    lockedWaypointIndex,
+    pendingQuestionResume,
+    sessionComplete,
+    waypointClearedState,
+  ]);
+
+  useEffect(() => {
+    if (!waypointClearedState || waypointClearedState.requiresContinue) return;
+
+    const timeout = window.setTimeout(() => {
+      if (mockGpsWalkEnabled) {
+        setMockLocationToWaypoint(activeWaypointIndex);
+        setLockedWaypointIndex(activeWaypointIndex);
+        setCardPhase("back");
+      }
+      setWaypointClearedState(null);
+    }, 1500);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeWaypointIndex, mockGpsWalkEnabled, waypointClearedState]);
 
   function revealQuestionCard(): void {
     if (!currentQuestion) return;
@@ -704,6 +742,7 @@ export function PlayQuizPage(): JSX.Element {
 
   function leaveQuestionScreen(): void {
     setLockedWaypointIndex(null);
+    setPendingQuestionResume(false);
     setCardPhase("back");
     setPreRevealCountdown(null);
     setQuestionDeadlineMs(null);
@@ -711,6 +750,34 @@ export function PlayQuizPage(): JSX.Element {
     setSelectedChoiceIds([]);
     setNumericAnswer(null);
     setLetterOrderAnswer("");
+    setError(null);
+  }
+
+  function continueToNextQuestionFromMap(): void {
+    if (distanceToWaypoint === null || distanceToWaypoint > getGateRadiusMeters()) {
+      setError(
+        t("player.tooFarError", {
+          actual: Math.max(0, Math.round(distanceToWaypoint ?? 0)),
+          required: getGateRadiusMeters(),
+        })
+      );
+      return;
+    }
+
+    setPendingQuestionResume(false);
+    setLockedWaypointIndex(activeWaypointIndex);
+    setCardPhase("back");
+    setError(null);
+  }
+
+  function continueAfterWaypointCleared(): void {
+    if (mockGpsWalkEnabled) {
+      setMockLocationToWaypoint(activeWaypointIndex);
+      setLockedWaypointIndex(activeWaypointIndex);
+      setCardPhase("back");
+    }
+    setPendingQuestionResume(false);
+    setWaypointClearedState(null);
     setError(null);
   }
 
@@ -920,13 +987,23 @@ export function PlayQuizPage(): JSX.Element {
         }
         setSessionComplete(true);
         setLockedWaypointIndex(null);
+        setPendingQuestionResume(false);
+        setWaypointClearedState(null);
         return;
       }
 
+      const nextWaypoint = quizWalk.waypoints[nextWaypointIndex];
       const firstQuestionIdx = getFirstUnansweredQuestionIndex(quizWalk.waypoints[nextWaypointIndex]);
       setActiveWaypointIndex(nextWaypointIndex);
       setActiveQuestionIndex(Math.max(0, firstQuestionIdx));
       setLockedWaypointIndex(null);
+      setPendingQuestionResume(true);
+      setWaypointClearedState({
+        clearedWaypointTitle: lockedWaypoint.title,
+        nextWaypointTitle: nextWaypoint?.title ?? "",
+        result,
+        requiresContinue: (summary?.revealMode ?? "instant") === "instant",
+      });
       setCardPhase("back");
       setQuestionDeadlineMs(null);
       setPreRevealCountdown(null);
@@ -942,7 +1019,8 @@ export function PlayQuizPage(): JSX.Element {
   const showCompletionScreen = Boolean(sessionComplete && summary && quizWalk && !debugMode);
   const showPreGame = !showGameplay && !showCompletionScreen;
   const showImmersivePlayerScreen = showGameplay || showCompletionScreen || showPreGame;
-  const journeyMode = showGameplay && lockedWaypointIndex === null;
+  const waypointClearedMode = showGameplay && waypointClearedState !== null;
+  const journeyMode = showGameplay && lockedWaypointIndex === null && !waypointClearedMode;
   const cardMode = showGameplay && lockedWaypointIndex !== null && currentQuestion;
   const completionMode = summary?.revealMode ?? "instant";
   const completionDateMs = useMemo(
@@ -1338,6 +1416,44 @@ export function PlayQuizPage(): JSX.Element {
           </div>
         ) : null}
 
+        {waypointClearedMode && waypointClearedState ? (
+          <div className="kwiz-player-phone-shell">
+            <div className="kwiz-adventure-shell kwiz-player-fill-card-hidden kwiz-player-phone-card">
+              <div className="kwiz-adventure-question-shell">
+                <div className="kwiz-adventure-question-header">
+                  <Text className="kwiz-adventure-topline">{t("player.waypointClearedTitle")}</Text>
+                  <Title order={3}>{waypointClearedState.clearedWaypointTitle}</Title>
+                  <Text>{t("player.waypointClearedBody", { waypoint: waypointClearedState.clearedWaypointTitle })}</Text>
+                  {waypointClearedState.nextWaypointTitle ? (
+                    <Text c="dimmed">{t("player.waypointClearedNext", { waypoint: waypointClearedState.nextWaypointTitle })}</Text>
+                  ) : null}
+                </div>
+
+                <div className="kwiz-adventure-question-body">
+                  {waypointClearedState.requiresContinue ? (
+                    <>
+                      <Badge color={waypointClearedState.result.isCorrect ? "green" : "red"} size="lg">
+                        {waypointClearedState.result.isCorrect ? t("player.resultCorrect") : t("player.resultIncorrect")}
+                      </Badge>
+                      <Text>
+                        {t("player.resultPoints", {
+                          points: waypointClearedState.result.pointsAwarded,
+                          score: waypointClearedState.result.score,
+                        })}
+                      </Text>
+                      <Button className="kwiz-adventure-submit" onClick={continueAfterWaypointCleared}>
+                        {t("player.waypointClearedContinue")}
+                      </Button>
+                    </>
+                  ) : (
+                    <Text c="dimmed">{t("player.waypointClearedAuto")}</Text>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
 
 
         {journeyMode && quizWalk && currentWaypoint ? (
@@ -1415,6 +1531,12 @@ export function PlayQuizPage(): JSX.Element {
             >
               {t("player.locationRefresh")}
             </Button>
+
+            {pendingQuestionResume ? (
+              <Button className="kwiz-walk-refresh-button" onClick={continueToNextQuestionFromMap}>
+                {t("player.continueToNextQuestion")}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
