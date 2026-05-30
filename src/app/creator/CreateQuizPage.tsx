@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
 import { latLngBounds } from "leaflet";
@@ -260,20 +260,22 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
   );
 }
 
-function EnsureSelectedWaypointVisible(props: { waypoint: DraftWaypointInput | null }): null {
+function EnsureSelectedWaypointVisible({ waypoint }: { waypoint: DraftWaypointInput | null }): null {
   const map = useMap();
 
   useEffect(() => {
-    if (!props.waypoint) return;
+    if (!waypoint) return;
 
-    const target: [number, number] = [props.waypoint.lat, props.waypoint.lng];
+    const target: [number, number] = [waypoint.lat, waypoint.lng];
     map.panTo(target, { animate: true, duration: 0.35 });
-  }, [map, props.waypoint?.lat, props.waypoint?.lng]);
+  }, [map, waypoint, waypoint?.lat, waypoint?.lng]);
 
   return null;
 }
 
-function TrackMapViewport(props: {
+function TrackMapViewport({
+  onViewportChange,
+}: {
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
 }): null {
   const map = useMap();
@@ -281,7 +283,7 @@ function TrackMapViewport(props: {
   useEffect(() => {
     const reportViewport = () => {
       const center = map.getCenter();
-      props.onViewportChange({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
+      onViewportChange({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
     };
 
     reportViewport();
@@ -292,7 +294,7 @@ function TrackMapViewport(props: {
       map.off("moveend", reportViewport);
       map.off("zoomend", reportViewport);
     };
-  }, [map, props.onViewportChange]);
+  }, [map, onViewportChange]);
 
   return null;
 }
@@ -604,7 +606,7 @@ export function CreateQuizPage(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, [editingQuizId, isEditingExistingQuiz]);
+  }, [editingQuizId, isEditingExistingQuiz, t]);
 
   useEffect(() => {
     if (input.isPublic) {
@@ -1153,16 +1155,16 @@ export function CreateQuizPage(): JSX.Element {
     setManualDrawError(null);
   }
 
-  function cancelManualLegDrawing(): void {
+  const cancelManualLegDrawing = useCallback((): void => {
     setDrawingLegIndex(null);
     setDrawingLegPoints([]);
     setManualDrawError(null);
-  }
+  }, []);
 
-  function undoManualLegPoint(): void {
+  const undoManualLegPoint = useCallback((): void => {
     setDrawingLegPoints((previous) => previous.slice(0, -1));
     setManualDrawError(null);
-  }
+  }, []);
 
   function addManualLegPoint(lat: number, lng: number): void {
     if (drawingLegIndex === null) return;
@@ -1170,7 +1172,7 @@ export function CreateQuizPage(): JSX.Element {
     setManualDrawError(null);
   }
 
-  function finishManualLegDrawing(): void {
+  const finishManualLegDrawing = useCallback((): void => {
     if (drawingLegIndex === null) return;
     const fromWaypoint = input.waypoints[drawingLegIndex];
     const toWaypoint = input.waypoints[drawingLegIndex + 1];
@@ -1197,7 +1199,7 @@ export function CreateQuizPage(): JSX.Element {
       },
     });
     cancelManualLegDrawing();
-  }
+  }, [cancelManualLegDrawing, drawingLegIndex, drawingLegPoints, input, t]);
 
   function selectQuestion(index: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
@@ -1247,7 +1249,7 @@ export function CreateQuizPage(): JSX.Element {
     setChoiceDraft("");
     setChoiceDraftIsCorrect(false);
     setChoiceDraftVisible(currentQuestion.choices.length === 0);
-  }, [selectedWaypointIndex, selectedQuestionIndex, currentQuestion?.questionType]);
+  }, [currentQuestion, selectedWaypointIndex, selectedQuestionIndex]);
 
   useEffect(() => {
     if (!currentWaypoint) return;
@@ -1261,7 +1263,7 @@ export function CreateQuizPage(): JSX.Element {
     setMoveMode(false);
     setMoveModePulse(false);
     setFocusedQuestionIndex(null);
-  }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
+  }, [currentWaypoint, selectedWaypointIndex, selectedQuestionIndex]);
 
   useEffect(() => {
     const focusTargetIndex = focusWaypointNameAfterAddRef.current;
@@ -1278,7 +1280,7 @@ export function CreateQuizPage(): JSX.Element {
     if (step !== 3 || drawingLegIndex >= input.waypoints.length - 1) {
       cancelManualLegDrawing();
     }
-  }, [drawingLegIndex, input.waypoints.length, step]);
+  }, [cancelManualLegDrawing, drawingLegIndex, input.waypoints.length, step]);
 
   useEffect(() => {
     if (drawingLegIndex === null || step !== 3) return;
@@ -1315,7 +1317,7 @@ export function CreateQuizPage(): JSX.Element {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [drawingLegIndex, step, drawingLegPoints.length, input.waypoints.length]);
+  }, [cancelManualLegDrawing, drawingLegIndex, finishManualLegDrawing, step, drawingLegPoints.length, input.waypoints.length, undoManualLegPoint]);
 
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
@@ -1378,10 +1380,6 @@ export function CreateQuizPage(): JSX.Element {
     { value: "hiking", label: t("creator.route.routeModeHiking") },
     { value: "manual", label: t("creator.route.routeModeManual") },
   ];
-
-  function getLegRouteMode(legIndex: number): RoutePreviewMode {
-    return input.ruleset.routeLegModes[legIndex] ?? defaultRouteMode;
-  }
 
   function setLegRouteMode(legIndex: number, mode: RoutePreviewMode): void {
     const nextLegModes = [...input.ruleset.routeLegModes];
@@ -1508,7 +1506,7 @@ export function CreateQuizPage(): JSX.Element {
 
     return input.waypoints.slice(0, -1).map((waypoint, index) => {
       const next = input.waypoints[index + 1];
-      const mode = getLegRouteMode(index);
+      const mode = input.ruleset.routeLegModes[index] ?? defaultRouteMode;
       const manualLegPoints = input.ruleset.routeLegCoordinates[index] ?? [];
       const anchoredManualLegPoints = buildAnchoredManualLegPoints(
         { lat: waypoint.lat, lng: waypoint.lng },
@@ -2610,7 +2608,7 @@ export function CreateQuizPage(): JSX.Element {
                     </Stack>
                   </Card>
 
-                  {input.locale === "__reorder_hidden__" ? (
+                  {input.waypoints.length < 0 ? (
                   <Card withBorder radius="md" p="sm">
                     <Stack gap="sm">
                       <Group justify="space-between" align="center" wrap="wrap">

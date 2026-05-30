@@ -146,7 +146,7 @@ export function PlayerProfilePage(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [t]);
 
   const discoveryBadges = useMemo(() => badges.filter((badge) => badge.type === "discovery"), [badges]);
   const tieredDefinitions = useMemo(

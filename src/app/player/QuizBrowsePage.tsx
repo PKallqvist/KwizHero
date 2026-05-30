@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -74,7 +74,7 @@ export function QuizBrowsePage(): JSX.Element {
   const [playCode, setPlayCode] = useState("");
   const [openingPlayCode, setOpeningPlayCode] = useState(false);
 
-  async function refreshLocation(): Promise<void> {
+  const refreshLocation = useCallback(async (): Promise<void> => {
     setLoadingLocation(true);
     setLocationError(null);
     try {
@@ -86,7 +86,7 @@ export function QuizBrowsePage(): JSX.Element {
     } finally {
       setLoadingLocation(false);
     }
-  }
+  }, [t]);
 
   useEffect(() => {
     let mounted = true;
@@ -135,7 +135,7 @@ export function QuizBrowsePage(): JSX.Element {
     refreshLocation().catch(() => {
       // handled above
     });
-  }, []);
+  }, [refreshLocation]);
 
   const quizItems = useMemo(() => {
     return quizzes.map((quiz) => {

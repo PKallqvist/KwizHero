@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { latLngBounds } from "leaflet";
@@ -80,15 +80,15 @@ interface JourneyMapProps {
   orderedRoute: boolean;
 }
 
-function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coordinates | null }): null {
+function FitJourneyBounds({ waypoints, current }: { waypoints: QuizWalkWaypoint[]; current: Coordinates | null }): null {
   const map = useMap();
 
   useEffect(() => {
-    if (props.waypoints.length === 0) return;
+    if (waypoints.length === 0) return;
 
-    const points: Array<[number, number]> = props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng]);
-    if (props.current) {
-      points.push([props.current.lat, props.current.lng]);
+    const points: Array<[number, number]> = waypoints.map((waypoint) => [waypoint.lat, waypoint.lng]);
+    if (current) {
+      points.push([current.lat, current.lng]);
     }
 
     if (points.length === 1) {
@@ -97,7 +97,7 @@ function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coord
     }
 
     map.fitBounds(latLngBounds(points), { padding: [30, 30], animate: false });
-  }, [map, props.current, props.waypoints]);
+  }, [current, map, waypoints]);
 
   return null;
 }
@@ -456,7 +456,7 @@ export function PlayQuizPage(): JSX.Element {
     return nearest?.index ?? unansweredIndexes[0]?.index ?? null;
   }
 
-  async function loadQuiz(): Promise<void> {
+  const loadQuiz = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
@@ -498,7 +498,7 @@ export function PlayQuizPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }
+  }, [currentUserUid, debugMode, playValue, t]);
 
   useEffect(() => {
     setSummary(null);
@@ -513,7 +513,7 @@ export function PlayQuizPage(): JSX.Element {
     loadQuiz().catch(() => {
       // loadQuiz already pushes user-visible error state
     });
-  }, [currentUserUid, playValue, t, debugMode]);
+  }, [loadQuiz, loading, summary]);
 
   async function joinQuiz(): Promise<void> {
     if (debugMode) {
@@ -635,7 +635,7 @@ export function PlayQuizPage(): JSX.Element {
     setCountdownNow(Date.now());
   }
 
-  function setMockLocationToWaypoint(waypointIndex: number): void {
+  const setMockLocationToWaypoint = useCallback((waypointIndex: number): void => {
     if (!quizWalk) return;
     const waypoint = quizWalk.waypoints[waypointIndex];
     if (!waypoint) return;
@@ -643,7 +643,7 @@ export function PlayQuizPage(): JSX.Element {
     setPlayerCoordinates({ lat: waypoint.lat, lng: waypoint.lng });
     setDistanceToWaypoint(0);
     setError(null);
-  }
+  }, [quizWalk]);
 
   async function refreshCurrentLocation(): Promise<void> {
     if (debugMode || mockGpsWalkEnabled || !currentWaypoint || sessionComplete) return;
@@ -699,17 +699,15 @@ export function PlayQuizPage(): JSX.Element {
     if (!mockGpsWalkEnabled || !quizWalk || sessionComplete) return;
     if (lockedWaypointIndex !== null) return;
     setMockLocationToWaypoint(activeWaypointIndex);
-  }, [activeWaypointIndex, lockedWaypointIndex, mockGpsWalkEnabled, quizWalk, sessionComplete]);
+  }, [activeWaypointIndex, lockedWaypointIndex, mockGpsWalkEnabled, quizWalk, sessionComplete, setMockLocationToWaypoint]);
 
-  function getGateRadiusMeters(): number {
-    return summary?.waypointGateRadiusMeters ?? 40;
-  }
+  const gateRadiusMeters = summary?.waypointGateRadiusMeters ?? 40;
 
   useEffect(() => {
     if (!currentWaypoint || lockedWaypointIndex !== null || distanceToWaypoint === null || sessionComplete) return;
     if (pendingQuestionResume) return;
     if (waypointClearedState) return;
-    if (distanceToWaypoint > getGateRadiusMeters()) return;
+    if (distanceToWaypoint > gateRadiusMeters) return;
     setLockedWaypointIndex(activeWaypointIndex);
     setCardPhase("back");
     setError(null);
@@ -721,6 +719,7 @@ export function PlayQuizPage(): JSX.Element {
     pendingQuestionResume,
     sessionComplete,
     waypointClearedState,
+    gateRadiusMeters,
   ]);
 
   useEffect(() => {
@@ -736,7 +735,7 @@ export function PlayQuizPage(): JSX.Element {
     }, 1500);
 
     return () => window.clearTimeout(timeout);
-  }, [activeWaypointIndex, mockGpsWalkEnabled, waypointClearedState]);
+  }, [activeWaypointIndex, mockGpsWalkEnabled, setMockLocationToWaypoint, waypointClearedState]);
 
   function revealQuestionCard(): void {
     if (!currentQuestion) return;
@@ -784,11 +783,11 @@ export function PlayQuizPage(): JSX.Element {
   }
 
   function continueToNextQuestionFromMap(): void {
-    if (distanceToWaypoint === null || distanceToWaypoint > getGateRadiusMeters()) {
+    if (distanceToWaypoint === null || distanceToWaypoint > gateRadiusMeters) {
       setError(
         t("player.tooFarError", {
           actual: Math.max(0, Math.round(distanceToWaypoint ?? 0)),
-          required: getGateRadiusMeters(),
+          required: gateRadiusMeters,
         })
       );
       return;
@@ -1074,7 +1073,7 @@ export function PlayQuizPage(): JSX.Element {
       const palette = ["#F6C453", "#1D4ED8", "#34d399", "#f472b6", "#c084fc"];
       const color = palette[Math.floor(Math.random() * palette.length)] ?? "#F6C453";
       return {
-        id: `confetti-${index}`,
+        id: `confetti-${completionReplayKey}-${index}`,
         left: Math.random() * 100,
         size: 4 + Math.random() * 4,
         delay: Math.random() * 160,
@@ -1510,7 +1509,7 @@ export function PlayQuizPage(): JSX.Element {
                 targetWaypointIndex={activeWaypointIndex}
                 completedWaypointIndexes={completedWaypointIndexes}
                 current={playerCoordinates}
-                radius={getGateRadiusMeters()}
+                radius={gateRadiusMeters}
                 currentLabel={nickname || t("player.locationYou")}
                 orderedRoute={summary?.requireSequentialWaypoints ?? true}
               />
