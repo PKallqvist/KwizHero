@@ -44,6 +44,8 @@ export interface DraftWaypointInput {
 export interface QuizDraftInput {
   title: string;
   description: string;
+  isPublic: boolean;
+  accessCode: string | null;
   locale: "en" | "sv";
   organizerName: string | null;
   organizerAvatarUrl: string | null;
@@ -58,6 +60,9 @@ export interface QuizSummary {
   title: string;
   description: string;
   status: "draft" | "published";
+  isPublic: boolean;
+  accessCode: string | null;
+  validUntil: string;
   creatorUid?: string;
   organizerName: string | null;
   organizerAvatarUrl: string | null;
@@ -80,6 +85,9 @@ export interface QuizListItem {
   title: string;
   description: string;
   status: "draft" | "published";
+  isPublic: boolean;
+  accessCode: string | null;
+  validUntil: string | null;
   waypointCount: number;
   routeDistanceKm?: number;
   createdAt: string | null;

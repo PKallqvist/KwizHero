@@ -32,7 +32,16 @@ import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, Ic
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
-import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
+import {
+  buildPlayShareLink,
+  checkAccessCodeAvailability,
+  createDraftQuiz,
+  generateAutoAccessCodePreview,
+  getEditableQuizDraft,
+  publishQuiz,
+  setQuizCustomAccessCode,
+  updateQuizDraft,
+} from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
 
@@ -464,6 +473,8 @@ export function CreateQuizPage(): JSX.Element {
   const [input, setInput] = useState<QuizDraftInput>({
     title: "Soccer Team Bi-weekly Quiz",
     description: "Public two-week quiz walk",
+    isPublic: false,
+    accessCode: null,
     locale: "sv",
     organizerName: "Johan Lindqvist",
     organizerAvatarUrl: null,
@@ -495,6 +506,11 @@ export function CreateQuizPage(): JSX.Element {
   const [loadingEditableQuiz, setLoadingEditableQuiz] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [customCodeEditorOpen, setCustomCodeEditorOpen] = useState(false);
+  const [customCodeDraft, setCustomCodeDraft] = useState("");
+  const [customCodeStatus, setCustomCodeStatus] = useState<"" | "checking" | "available" | "taken" | "invalid">("");
+  const [customCodeSuggestion, setCustomCodeSuggestion] = useState("");
+  const [savingCustomCode, setSavingCustomCode] = useState(false);
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
   const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
@@ -530,6 +546,8 @@ export function CreateQuizPage(): JSX.Element {
     if (!result) return "";
     return buildPlayShareLink(result.quizId);
   }, [result]);
+
+  const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
 
   useEffect(() => {
     async function buildQr(): Promise<void> {
@@ -585,6 +603,101 @@ export function CreateQuizPage(): JSX.Element {
       mounted = false;
     };
   }, [editingQuizId, isEditingExistingQuiz]);
+
+  useEffect(() => {
+    if (input.isPublic) {
+      setCustomCodeEditorOpen(false);
+      setCustomCodeDraft("");
+      setCustomCodeStatus("");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    if (!input.accessCode) {
+      const nextCode = generateAutoAccessCodePreview();
+      setInput((previous) => ({
+        ...previous,
+        accessCode: nextCode,
+      }));
+      setCustomCodeDraft(nextCode);
+      return;
+    }
+
+    if (!customCodeEditorOpen) {
+      setCustomCodeDraft(input.accessCode);
+    }
+  }, [customCodeEditorOpen, input.accessCode, input.isPublic]);
+
+  useEffect(() => {
+    if (!customCodeEditorOpen || input.isPublic) return;
+
+    const trimmed = customCodeDraft.trim();
+    if (trimmed.length === 0) {
+      setCustomCodeStatus("");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    if (!/^[A-Za-z0-9-]{4,20}$/.test(trimmed)) {
+      setCustomCodeStatus("invalid");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    setCustomCodeStatus("checking");
+    const timeout = setTimeout(() => {
+      checkAccessCodeAvailability(trimmed, result?.quizId)
+        .then((availability) => {
+          if (availability.available) {
+            setCustomCodeStatus("available");
+            setCustomCodeSuggestion("");
+            return;
+          }
+          setCustomCodeStatus("taken");
+          setCustomCodeSuggestion(availability.suggestion ?? "");
+        })
+        .catch(() => {
+          setCustomCodeStatus("invalid");
+          setCustomCodeSuggestion("");
+        });
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [customCodeDraft, customCodeEditorOpen, input.isPublic, result?.quizId]);
+
+  function setPrivateAccessCode(nextCode: string): void {
+    setInput((previous) => ({
+      ...previous,
+      isPublic: false,
+      accessCode: nextCode,
+    }));
+  }
+
+  async function copyAccessCode(): Promise<void> {
+    if (!displayedAccessCode) return;
+    await navigator.clipboard.writeText(displayedAccessCode);
+  }
+
+  async function saveCustomAccessCode(): Promise<void> {
+    const trimmed = customCodeDraft.trim();
+    if (!trimmed || customCodeStatus === "invalid" || customCodeStatus === "checking") return;
+
+    setSavingCustomCode(true);
+    setError(null);
+    try {
+      if (result?.quizId) {
+        await setQuizCustomAccessCode(result.quizId, trimmed);
+      }
+      setPrivateAccessCode(trimmed);
+      setCustomCodeEditorOpen(false);
+      setCustomCodeSuggestion("");
+      setCustomCodeStatus("");
+    } catch (e) {
+      setError(getReadableError(e));
+    } finally {
+      setSavingCustomCode(false);
+    }
+  }
 
   function updateCurrentWaypoint(next: DraftWaypointInput): void {
     setInput((prev) => {
@@ -1492,6 +1605,24 @@ export function CreateQuizPage(): JSX.Element {
               })}
             />
             <Switch
+              label={t("creator.identity.labelPublicQuiz")}
+              checked={input.isPublic}
+              onChange={(event) => {
+                const isPublic = event.currentTarget.checked;
+                setInput({
+                  ...input,
+                  isPublic,
+                  accessCode: isPublic ? null : input.accessCode ?? generateAutoAccessCodePreview(),
+                });
+                if (isPublic) {
+                  setCustomCodeEditorOpen(false);
+                  setCustomCodeDraft("");
+                  setCustomCodeStatus("");
+                  setCustomCodeSuggestion("");
+                }
+              }}
+            />
+            <Switch
               label={t("creator.identity.labelAnonymousOrganizer")}
               checked={input.isAnonymous}
               onChange={(event) => setInput({
@@ -1509,6 +1640,111 @@ export function CreateQuizPage(): JSX.Element {
                   organizerAvatarUrl: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
                 })}
               />
+            ) : null}
+
+            {!input.isPublic ? (
+              <Card withBorder radius="md" className="kwiz-creator-access-code-card">
+                <Stack gap="sm">
+                  <Group justify="space-between" align="flex-start" wrap="wrap">
+                    <Stack gap={2}>
+                      <Text fw={600}>{t("creator.identity.accessCodeTitle")}</Text>
+                      <Text size="sm" c="dimmed">
+                        {t("creator.identity.accessCodeHelp")}
+                      </Text>
+                    </Stack>
+                    <Badge variant="light" color="grape">
+                      {t("creator.identity.accessCodePrivateBadge")}
+                    </Badge>
+                  </Group>
+
+                  <Paper withBorder radius="md" p="sm">
+                    <Group justify="space-between" align="center" wrap="wrap">
+                      <Stack gap={0}>
+                        <Text size="xs" c="dimmed">
+                          {t("creator.identity.accessCodeCurrent")}
+                        </Text>
+                        <Text fw={700}>{displayedAccessCode || "-"}</Text>
+                      </Stack>
+                      <Group gap="xs" wrap="wrap">
+                        <Button variant="light" size="xs" onClick={() => void copyAccessCode()} disabled={!displayedAccessCode}>
+                          {t("creator.identity.copyCode")}
+                        </Button>
+                        <Button
+                          variant="light"
+                          size="xs"
+                          onClick={() => {
+                            const nextCode = generateAutoAccessCodePreview();
+                            setPrivateAccessCode(nextCode);
+                            setCustomCodeDraft(nextCode);
+                            setCustomCodeEditorOpen(true);
+                            setCustomCodeStatus("");
+                            setCustomCodeSuggestion("");
+                          }}
+                        >
+                          {t("creator.identity.generateNewCode")}
+                        </Button>
+                        <Button
+                          variant="light"
+                          size="xs"
+                          onClick={() => {
+                            setCustomCodeEditorOpen((current) => !current);
+                            setCustomCodeDraft(displayedAccessCode);
+                          }}
+                        >
+                          {customCodeEditorOpen ? t("common.cancel") : t("creator.identity.customizeCode")}
+                        </Button>
+                      </Group>
+                    </Group>
+                  </Paper>
+
+                  {customCodeEditorOpen ? (
+                    <Card withBorder radius="md" p="sm">
+                      <Stack gap="sm">
+                        <TextInput
+                          label={t("creator.identity.customCodeLabel")}
+                          value={customCodeDraft}
+                          onChange={(event) => setCustomCodeDraft(event.currentTarget.value)}
+                          description={t("creator.identity.customCodeHelp")}
+                        />
+                        {customCodeStatus === "invalid" ? (
+                          <Alert color="yellow" variant="light">
+                            {t("creator.identity.customCodeInvalid")}
+                          </Alert>
+                        ) : null}
+                        {customCodeStatus === "taken" ? (
+                          <Alert color="orange" variant="light">
+                            <Stack gap={4}>
+                              <Text size="sm">{t("creator.identity.customCodeTaken")}</Text>
+                              {customCodeSuggestion ? (
+                                <Button
+                                  variant="subtle"
+                                  size="xs"
+                                  onClick={() => setCustomCodeDraft(customCodeSuggestion)}
+                                >
+                                  {t("creator.identity.customCodeUseSuggestion", { code: customCodeSuggestion })}
+                                </Button>
+                              ) : null}
+                            </Stack>
+                          </Alert>
+                        ) : null}
+                        <Group justify="flex-end">
+                          <Button variant="default" size="xs" onClick={() => setCustomCodeEditorOpen(false)}>
+                            {t("common.cancel")}
+                          </Button>
+                          <Button
+                            size="xs"
+                            onClick={() => void saveCustomAccessCode()}
+                            loading={savingCustomCode}
+                            disabled={customCodeStatus === "invalid" || customCodeStatus === "checking"}
+                          >
+                            {t("creator.identity.saveCustomCode")}
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </Card>
+                  ) : null}
+                </Stack>
+              </Card>
             ) : null}
           </SimpleGrid>
         ) : null}

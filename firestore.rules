@@ -31,6 +31,16 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /quizAccessCodes/{normalizedCode} {
+      allow read: if true;
+      allow create: if request.resource.data.quizId is string
+        && request.resource.data.code is string
+        && request.resource.data.codeNormalized is string
+        && isQuizOwner(request.resource.data.quizId);
+      allow update: if resource.data.quizId is string && isQuizOwner(resource.data.quizId);
+      allow delete: if resource.data.quizId is string && isQuizOwner(resource.data.quizId);
+    }
+
     match /quizRules/{quizId} {
       allow read: if true;
       allow create: if isQuizOwner(quizId);

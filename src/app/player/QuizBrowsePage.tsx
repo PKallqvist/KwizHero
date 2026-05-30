@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Badge,
@@ -25,8 +26,8 @@ import {
   setPlayerQuizFavorite,
   type PlayerQuizHistoryItem,
   type PublishedQuizDiscoveryItem,
-  type QuizSummary,
 } from "../../platform/firebase/quizRepository";
+import type { QuizSummary } from "../../domain/types";
 import { classifyBrowseFavoriteGroup } from "./quizBrowseLogic";
 
 interface BrowseQuizItem extends PublishedQuizDiscoveryItem {
@@ -56,6 +57,7 @@ function groupFavorites(items: BrowseQuizItem[], summaryByQuizId: Record<string,
 
 export function QuizBrowsePage(): JSX.Element {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [quizzes, setQuizzes] = useState<PublishedQuizDiscoveryItem[]>([]);
   const [favoriteQuizIds, setFavoriteQuizIds] = useState<string[]>([]);
   const [history, setHistory] = useState<PlayerQuizHistoryItem[]>([]);
@@ -69,6 +71,8 @@ export function QuizBrowsePage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [updatingFavoriteQuizId, setUpdatingFavoriteQuizId] = useState<string | null>(null);
+  const [playCode, setPlayCode] = useState("");
+  const [openingPlayCode, setOpeningPlayCode] = useState(false);
 
   async function refreshLocation(): Promise<void> {
     setLoadingLocation(true);
@@ -188,6 +192,17 @@ export function QuizBrowsePage(): JSX.Element {
     }
   }
 
+  async function openByCode(): Promise<void> {
+    const trimmed = playCode.trim();
+    if (!trimmed) return;
+    setOpeningPlayCode(true);
+    try {
+      navigate(`/play/${trimmed}`);
+    } finally {
+      setOpeningPlayCode(false);
+    }
+  }
+
   function renderQuizCard(quiz: BrowseQuizItem): JSX.Element {
     const scoreBadge = quiz.latestHistory?.status === "completed"
       ? `${quiz.latestHistory.score}/${quiz.questionCount}`
@@ -200,6 +215,9 @@ export function QuizBrowsePage(): JSX.Element {
             <Stack gap={2}>
               <Group gap="xs" wrap="wrap">
                 <Title order={4}>{quiz.title}</Title>
+                <Badge variant="light" color="blue">
+                  {t("userQuizzes.typePublic")}
+                </Badge>
                 {quiz.distanceMeters !== null ? (
                   <Badge variant="light">{t("browse.kmAway", { distance: (quiz.distanceMeters / 1000).toFixed(1) })}</Badge>
                 ) : null}
@@ -262,6 +280,31 @@ export function QuizBrowsePage(): JSX.Element {
 
       <Card withBorder radius="lg" p="md">
         <Stack gap="md">
+          <Card withBorder radius="md" p="sm">
+            <Stack gap="sm">
+              <Text fw={600}>{t("browse.codeTitle")}</Text>
+              <Text size="sm" c="dimmed">{t("browse.codeHelp")}</Text>
+              <Group align="end" wrap="wrap">
+                <TextInput
+                  label={t("browse.codeLabel")}
+                  placeholder={t("browse.codePlaceholder")}
+                  value={playCode}
+                  onChange={(event) => setPlayCode(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void openByCode();
+                    }
+                  }}
+                  w={260}
+                />
+                <Button loading={openingPlayCode} onClick={() => void openByCode()}>
+                  {t("browse.openByCode")}
+                </Button>
+              </Group>
+            </Stack>
+          </Card>
+
           <TextInput
             label={t("browse.searchLabel")}
             placeholder={t("browse.searchPlaceholder")}

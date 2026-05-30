@@ -45,6 +45,7 @@ import {
   getQuizWalk,
   getQuizSummary,
   markFirstDiscoverySeen,
+  resolvePlayableQuizId,
   savePlayerBadgeProgress,
   startSession,
   storePlayerBadgeUnlocks,
@@ -223,12 +224,13 @@ export function PlayQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { setSession, setProfile } = useQuizSession();
-  const { quizId = "" } = useParams();
+  const { quizId: playValue = "" } = useParams();
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugMode = searchParams.get("debug") === "1";
 
   const [nickname, setNickname] = useState("");
   const [summary, setSummary] = useState<QuizSummary | null>(null);
+  const [resolvedQuizId, setResolvedQuizId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [quizWalk, setQuizWalk] = useState<QuizWalk | null>(null);
 
@@ -465,7 +467,16 @@ export function PlayQuizPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const q = await getQuizSummary(quizId);
+      const resolved = await resolvePlayableQuizId(playValue);
+      if (!resolved) {
+        setSummary(null);
+        setResolvedQuizId(null);
+        setError(t("player.noQuiz"));
+        return;
+      }
+
+      setResolvedQuizId(resolved.quizId);
+      const q = await getQuizSummary(resolved.quizId);
       setSummary(q);
       if (!q) {
         setError(t("player.noQuiz"));
@@ -477,7 +488,7 @@ export function PlayQuizPage(): JSX.Element {
         setError(t("player.errorDraftUnavailable"));
       }
 
-      const walk = await getQuizWalk(quizId);
+      const walk = await getQuizWalk(resolved.quizId);
       if (!walk) {
         setError(t("player.errorNoPlayable"));
         return;
@@ -497,11 +508,19 @@ export function PlayQuizPage(): JSX.Element {
   }
 
   useEffect(() => {
+    setSummary(null);
+    setQuizWalk(null);
+    setResolvedQuizId(null);
+    setSessionId(null);
+    setError(firebaseConfigError);
+  }, [playValue]);
+
+  useEffect(() => {
     if (summary || loading) return;
     loadQuiz().catch(() => {
       // loadQuiz already pushes user-visible error state
     });
-  }, [currentUserUid, quizId, t, debugMode]);
+  }, [currentUserUid, playValue, t, debugMode]);
 
   async function joinQuiz(): Promise<void> {
     if (debugMode) {
@@ -539,7 +558,12 @@ export function PlayQuizPage(): JSX.Element {
     }
 
     setError(null);
-    const sid = await startSession(quizId, nickname.trim());
+    if (!resolvedQuizId) {
+      setError(t("player.noQuiz"));
+      return;
+    }
+
+    const sid = await startSession(resolvedQuizId, nickname.trim());
     setSessionId(sid);
 
     const firstWaypoint = getNextWaypointIndex([]) ?? 0;
@@ -582,7 +606,12 @@ export function PlayQuizPage(): JSX.Element {
 
     const debugNickname = nickname.trim().length > 0 ? nickname.trim() : "Creator Debug";
     setError(null);
-    const sid = await startSession(quizId, debugNickname);
+    if (!resolvedQuizId) {
+      setError(t("player.noQuiz"));
+      return;
+    }
+
+    const sid = await startSession(resolvedQuizId, debugNickname);
 
     const firstWaypoint = getNextWaypointIndex([]) ?? 0;
     const firstQuestion = getFirstUnansweredQuestionIndex(quizWalk.waypoints[firstWaypoint]);
@@ -951,8 +980,13 @@ export function PlayQuizPage(): JSX.Element {
     const elapsedMs = questionStartMs ? Date.now() - questionStartMs : 0;
     setError(null);
     try {
+      if (!resolvedQuizId) {
+        setError(t("player.noQuiz"));
+        return;
+      }
+
       const result = await submitFirstAnswer({
-        quizId,
+        quizId: resolvedQuizId,
         sessionId,
         waypointId: quizWalk.waypoints[lockedWaypointIndex].id,
         questionId: currentQuestion.id,

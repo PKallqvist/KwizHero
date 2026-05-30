@@ -20,6 +20,7 @@ import { IconAlertCircle, IconCheck, IconCopy, IconQrcode, IconTrophy } from "@t
 import {
   buildPlayShareLink,
   getQuizLeaderboard,
+  regenerateQuizAccessCode,
   getUserQuizzes,
   publishQuiz,
 } from "../../platform/firebase/quizRepository";
@@ -39,6 +40,7 @@ export function UserQuizzesPage(): JSX.Element {
   const [qrQuiz, setQrQuiz] = useState<{ id: string; title: string; shareLink: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [publishingQuizId, setPublishingQuizId] = useState<string | null>(null);
+  const [regeneratingQuizId, setRegeneratingQuizId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -136,10 +138,12 @@ export function UserQuizzesPage(): JSX.Element {
 
   const rows = useMemo(() => {
     return quizzes.map((quiz) => {
-      const shareLink = buildPlayShareLink(quiz.id);
+      const playValue = !quiz.isPublic && quiz.accessCode ? quiz.accessCode : quiz.id;
+      const shareLink = buildPlayShareLink(playValue);
       const copied = clipboard.copied && lastCopiedQuizId === quiz.id;
       const canEdit = quiz.status === "draft";
       const isPublished = quiz.status === "published";
+      const isPrivate = !quiz.isPublic;
 
       return (
         <div key={quiz.id} className="kwiz-myquiz-item">
@@ -152,6 +156,18 @@ export function UserQuizzesPage(): JSX.Element {
               <Badge color={quiz.status === "published" ? "teal" : "gray"} variant="light">
                 {quiz.status === "published" ? t("userQuizzes.statusPublished") : t("userQuizzes.statusDraft")}
               </Badge>
+            </Group>
+
+            <Group gap="xs" wrap="wrap">
+              <Badge color={isPrivate ? "grape" : "blue"} variant="light">
+                {isPrivate ? t("userQuizzes.typePrivate") : t("userQuizzes.typePublic")}
+              </Badge>
+              <Text size="sm" c="dimmed">
+                {t("userQuizzes.accessCodeLabel")}: {isPrivate ? quiz.accessCode ?? "-" : "-"}
+              </Text>
+              <Text size="sm" c="dimmed">
+                {t("userQuizzes.validUntilLabel")}: {quiz.validUntil ? new Date(quiz.validUntil).toLocaleString() : "-"}
+              </Text>
             </Group>
 
             <Text size="sm" c="dimmed">
@@ -185,25 +201,64 @@ export function UserQuizzesPage(): JSX.Element {
               ) : null}
               {isPublished ? (
                 <>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                    onClick={() => {
-                      setLastCopiedQuizId(quiz.id);
-                      clipboard.copy(shareLink);
-                    }}
-                  >
-                    {copied ? t("userQuizzes.copied") : t("userQuizzes.copyLink")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    leftSection={<IconQrcode size={14} />}
-                    onClick={() => setQrQuiz({ id: quiz.id, title: quiz.title, shareLink })}
-                  >
-                    {t("userQuizzes.qrCode")}
-                  </Button>
+                  {isPrivate ? (
+                    <>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        onClick={() => {
+                          setLastCopiedQuizId(quiz.id);
+                          clipboard.copy(quiz.accessCode ?? "");
+                        }}
+                        disabled={!quiz.accessCode}
+                      >
+                        {copied ? t("userQuizzes.copied") : t("userQuizzes.copyCode")}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        loading={regeneratingQuizId === quiz.id}
+                        onClick={async () => {
+                          setRegeneratingQuizId(quiz.id);
+                          try {
+                            const newCode = await regenerateQuizAccessCode(quiz.id);
+                            setQuizzes((current) =>
+                              current.map((entry) => (entry.id === quiz.id ? { ...entry, isPublic: false, accessCode: newCode } : entry))
+                            );
+                          } catch (error) {
+                            setQuizzesError((error as Error).message ?? t("userQuizzes.loadError"));
+                          } finally {
+                            setRegeneratingQuizId((current) => (current === quiz.id ? null : current));
+                          }
+                        }}
+                      >
+                        {t("userQuizzes.regenerateCode")}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        onClick={() => {
+                          setLastCopiedQuizId(quiz.id);
+                          clipboard.copy(shareLink);
+                        }}
+                      >
+                        {copied ? t("userQuizzes.copied") : t("userQuizzes.copyLink")}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={<IconQrcode size={14} />}
+                        onClick={() => setQrQuiz({ id: quiz.id, title: quiz.title, shareLink })}
+                      >
+                        {t("userQuizzes.qrCode")}
+                      </Button>
+                    </>
+                  )}
                 </>
               ) : null}
               <Button
@@ -214,7 +269,7 @@ export function UserQuizzesPage(): JSX.Element {
               >
                 {t("userQuizzes.leaderboard")}
               </Button>
-              <Anchor component={Link} to={`/play/${quiz.id}`} size="sm">
+              <Anchor component={Link} to={`/play/${playValue}`} size="sm">
                 {t("userQuizzes.openPlay")}
               </Anchor>
             </Group>
@@ -228,7 +283,7 @@ export function UserQuizzesPage(): JSX.Element {
         </div>
       );
     });
-  }, [clipboard, lastCopiedQuizId, quizzes, t]);
+  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t]);
 
   return (
     <Stack gap="md">

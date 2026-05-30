@@ -1,5 +1,5 @@
 import type { PlayerQuizHistoryItem } from "../../platform/firebase/quizRepository";
-import type { QuizSummary } from "../../platform/firebase/quizRepository";
+import type { QuizSummary } from "../../domain/types";
 
 export type BrowseFavoriteGroup = "new" | "waiting" | "completed";
 
