@@ -62,7 +62,6 @@ export function QuizBrowsePage(): JSX.Element {
   const [favoriteQuizIds, setFavoriteQuizIds] = useState<string[]>([]);
   const [history, setHistory] = useState<PlayerQuizHistoryItem[]>([]);
   const [summaryByQuizId, setSummaryByQuizId] = useState<Record<string, QuizSummary | null>>({});
-  const [search, setSearch] = useState("");
   const [nearbyOnly, setNearbyOnly] = useState(false);
   const [radiusKm, setRadiusKm] = useState<number | "">(25);
   const [currentCoordinates, setCurrentCoordinates] = useState<Coordinates | null>(null);
@@ -71,7 +70,7 @@ export function QuizBrowsePage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [updatingFavoriteQuizId, setUpdatingFavoriteQuizId] = useState<string | null>(null);
-  const [playCode, setPlayCode] = useState("");
+  const [searchOrCode, setSearchOrCode] = useState("");
   const [openingPlayCode, setOpeningPlayCode] = useState(false);
 
   const refreshLocation = useCallback(async (): Promise<void> => {
@@ -150,7 +149,7 @@ export function QuizBrowsePage(): JSX.Element {
   }, [currentCoordinates, favoriteQuizIds, history, quizzes]);
 
   const filteredItems = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
+    const normalizedSearch = searchOrCode.trim().toLowerCase();
     return quizItems
       .filter((quiz) => {
         if (normalizedSearch.length === 0) return true;
@@ -170,7 +169,7 @@ export function QuizBrowsePage(): JSX.Element {
         }
         return left.title.localeCompare(right.title);
       });
-  }, [currentCoordinates, nearbyOnly, quizItems, radiusKm, search]);
+  }, [currentCoordinates, nearbyOnly, quizItems, radiusKm, searchOrCode]);
 
   const favoriteGroups = useMemo(() => groupFavorites(quizItems.filter((item) => item.isFavorite), summaryByQuizId), [quizItems, summaryByQuizId]);
   const favoriteCount = favoriteGroups.new.length + favoriteGroups.waiting.length + favoriteGroups.completed.length;
@@ -194,7 +193,7 @@ export function QuizBrowsePage(): JSX.Element {
   }
 
   async function openByCode(): Promise<void> {
-    const trimmed = playCode.trim();
+    const trimmed = searchOrCode.trim();
     if (!trimmed) return;
     setOpeningPlayCode(true);
     try {
@@ -281,37 +280,24 @@ export function QuizBrowsePage(): JSX.Element {
 
       <Card withBorder radius="lg" p="md">
         <Stack gap="md">
-          <Card withBorder radius="md" p="sm">
-            <Stack gap="sm">
-              <Text fw={600}>{t("browse.codeTitle")}</Text>
-              <Text size="sm" c="dimmed">{t("browse.codeHelp")}</Text>
-              <Group align="end" wrap="wrap">
-                <TextInput
-                  label={t("browse.codeLabel")}
-                  placeholder={t("browse.codePlaceholder")}
-                  value={playCode}
-                  onChange={(event) => setPlayCode(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void openByCode();
-                    }
-                  }}
-                  w={260}
-                />
-                <Button loading={openingPlayCode} onClick={() => void openByCode()}>
-                  {t("browse.openByCode")}
-                </Button>
-              </Group>
-            </Stack>
-          </Card>
-
           <TextInput
-            label={t("browse.searchLabel")}
-            placeholder={t("browse.searchPlaceholder")}
+            label={t("browse.searchOrCodeLabel")}
+            placeholder={t("browse.searchOrCodePlaceholder")}
             leftSection={<IconSearch size={16} />}
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
+            value={searchOrCode}
+            onChange={(event) => setSearchOrCode(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void openByCode();
+              }
+            }}
+            rightSection={
+              <Button size="xs" loading={openingPlayCode} onClick={() => void openByCode()}>
+                {t("browse.openByCode")}
+              </Button>
+            }
+            rightSectionWidth={112}
           />
 
           <Group align="end" wrap="wrap">

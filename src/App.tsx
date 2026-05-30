@@ -147,7 +147,10 @@ function BottomBarAndDrawer(): JSX.Element {
                 <button
                   type="button"
                   className="kwiz-drawer-item is-danger"
-                  onClick={() => setConfirmAbandon(true)}
+                  onClick={() => {
+                    closeDrawer();
+                    setConfirmAbandon(true);
+                  }}
                 >
                   <IconX size={20} className="kwiz-drawer-icon" />
                   <div>
@@ -226,6 +229,7 @@ function BottomBarAndDrawer(): JSX.Element {
         title={t("player.abandonTitle")}
         centered
         size="sm"
+        zIndex={3000}
       >
         <Text size="sm">{t("player.abandonBody")}</Text>
         <Group mt="md" justify="flex-end">

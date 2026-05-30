@@ -509,11 +509,11 @@ export function PlayQuizPage(): JSX.Element {
   }, [playValue]);
 
   useEffect(() => {
-    if (summary || loading) return;
+    if (summary || loading || error) return;
     loadQuiz().catch(() => {
       // loadQuiz already pushes user-visible error state
     });
-  }, [loadQuiz, loading, summary]);
+  }, [error, loadQuiz, loading, summary]);
 
   async function joinQuiz(): Promise<void> {
     if (debugMode) {
