@@ -114,8 +114,9 @@ export function QuizBrowsePage(): JSX.Element {
         if (!mounted) return;
         setError((loadError as Error).message ?? "Failed to load quizzes");
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 

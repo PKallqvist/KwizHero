@@ -456,13 +456,6 @@ export function PlayQuizPage(): JSX.Element {
     return nearest?.index ?? unansweredIndexes[0]?.index ?? null;
   }
 
-  function getGlobalQuestionNumber(waypointIndex: number, questionIndex: number): number {
-    if (!quizWalk) return 1;
-    return quizWalk.waypoints
-      .slice(0, waypointIndex)
-      .reduce((sum, waypoint) => sum + waypoint.questions.length, 0) + questionIndex + 1;
-  }
-
   async function loadQuiz(): Promise<void> {
     setLoading(true);
     setError(null);
@@ -1106,8 +1099,6 @@ export function PlayQuizPage(): JSX.Element {
 
   const currentWaypointQuestionCount =
     lockedWaypointIndex !== null ? quizWalk?.waypoints[lockedWaypointIndex]?.questions.length ?? 0 : 0;
-  const currentQuestionGlobal =
-    lockedWaypointIndex !== null ? getGlobalQuestionNumber(lockedWaypointIndex, activeQuestionIndex) : 0;
   const anyOrderQuestionsEnabled = summary?.questionOrderMode === "any";
   const unansweredQuestionOptions = useMemo(() => {
     if (!quizWalk || lockedWaypointIndex === null) return [];

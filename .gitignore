@@ -9,3 +9,4 @@ functions/lib/
 *.tsbuildinfo
 .github-protection.json
 .features/
+COMMANDS.md

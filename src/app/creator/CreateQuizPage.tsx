@@ -317,6 +317,7 @@ function FitWaypointsBounds(props: { waypoints: DraftWaypointInput[]; enabled?: 
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
   const fallbackCenter = props.waypoints[props.selectedWaypointIndex] ?? props.waypoints[0] ?? { lat: 57.7089, lng: 11.9746 };
 
@@ -588,8 +589,9 @@ export function CreateQuizPage(): JSX.Element {
         if (!mounted) return;
         setError(getReadableError(e));
       } finally {
-        if (!mounted) return;
-        setLoadingEditableQuiz(false);
+        if (mounted) {
+          setLoadingEditableQuiz(false);
+        }
       }
     }
 
@@ -657,7 +659,9 @@ export function CreateQuizPage(): JSX.Element {
           setCustomCodeSuggestion(availability.suggestion ?? "");
         })
         .catch(() => {
-          setCustomCodeStatus("invalid");
+          // If live availability check fails (network/rules), keep format-valid state
+          // so creators can still try saving and get a concrete backend error.
+          setCustomCodeStatus("");
           setCustomCodeSuggestion("");
         });
     }, 300);
@@ -1562,7 +1566,14 @@ export function CreateQuizPage(): JSX.Element {
           </Alert>
         ) : null}
 
-        <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
+        <Stepper
+          active={step - 1}
+          onStepClick={(n) => {
+            if (!isEditingExistingQuiz) return;
+            setStep((n + 1) as WizardStep);
+          }}
+          allowNextStepsSelect={isEditingExistingQuiz}
+        >
           <Stepper.Step label={t("creator.steps.identity")} />
           <Stepper.Step label={t("creator.steps.rules")} />
           <Stepper.Step label={t("creator.steps.route")} />
@@ -2599,7 +2610,7 @@ export function CreateQuizPage(): JSX.Element {
                     </Stack>
                   </Card>
 
-                  {false ? (
+                  {input.locale === "__reorder_hidden__" ? (
                   <Card withBorder radius="md" p="sm">
                     <Stack gap="sm">
                       <Group justify="space-between" align="center" wrap="wrap">
@@ -2908,9 +2919,21 @@ export function CreateQuizPage(): JSX.Element {
           <Button variant="default" onClick={previousStep} disabled={step === 1}>
             {t("common.back")}
           </Button>
-          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
-            {t("common.next")}
-          </Button>
+          <Group>
+            {isEditingExistingQuiz ? (
+              <Button
+                variant="light"
+                onClick={onCreate}
+                disabled={Boolean(firebaseConfigError) || loadingEditableQuiz || editingQuizStatus === "published"}
+                loading={savingDraft}
+              >
+                {t("creator.publish.saveDraftChanges")}
+              </Button>
+            ) : null}
+            <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
+              {t("common.next")}
+            </Button>
+          </Group>
         </Group>
 
         {error ? (

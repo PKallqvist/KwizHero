@@ -56,8 +56,9 @@ export function UserQuizzesPage(): JSX.Element {
         if (!mounted) return;
         setQuizzesError((error as Error).message ?? "Failed to load quizzes");
       } finally {
-        if (!mounted) return;
-        setLoadingQuizzes(false);
+        if (mounted) {
+          setLoadingQuizzes(false);
+        }
       }
     }
 
@@ -96,8 +97,9 @@ export function UserQuizzesPage(): JSX.Element {
         if (!mounted) return;
         setLeaderboardError((error as Error).message ?? "Failed to load leaderboard");
       } finally {
-        if (!mounted) return;
-        setLoadingLeaderboard(false);
+        if (mounted) {
+          setLoadingLeaderboard(false);
+        }
       }
     }
 
@@ -283,7 +285,7 @@ export function UserQuizzesPage(): JSX.Element {
         </div>
       );
     });
-  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t]);
+  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t, publishingQuizId]);
 
   return (
     <Stack gap="md">

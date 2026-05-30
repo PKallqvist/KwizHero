@@ -261,10 +261,6 @@ function randomKey(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
 function randomCode(length: number): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   let result = "";
@@ -924,7 +920,7 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
       validUntil = null;
     }
 
-    let routeDistanceKm = 0;
+    let routeDistanceKm: number;
     try {
       const waypointSnapshot = await getDocs(
         query(collection(db, `quizzes/${quizDoc.id}/waypoints`), orderBy("order", "asc"))
@@ -1123,7 +1119,16 @@ export async function getPlayerQuizHistory(): Promise<PlayerQuizHistoryItem[]> {
     }
   });
 
-  return [...latestByQuiz.values()].sort((a, b) => b.sortTime - a.sortTime).map(({ sortTime, ...entry }) => entry);
+  return [...latestByQuiz.values()]
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .map((entry) => ({
+      sessionId: entry.sessionId,
+      quizId: entry.quizId,
+      status: entry.status,
+      score: entry.score,
+      startedAt: entry.startedAt,
+      completedAt: entry.completedAt,
+    }));
 }
 
 export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promise<LeaderboardEntry[]> {
@@ -1154,7 +1159,8 @@ export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promi
   });
 }
 
-export async function publishQuiz(quizId: string, editKey: string): Promise<void> {
+export async function publishQuiz(quizId: string, _editKey: string): Promise<void> {
+  void _editKey;
   const { db } = getFirebaseServices();
   await assertQuizOwnership(quizId);
 
@@ -1415,7 +1421,7 @@ export async function submitFirstAnswer(params: {
   };
 
   const questionType = questionData.questionType ?? "multiple_choice";
-  let isCorrect = false;
+  let isCorrect: boolean;
 
   if (questionType === "numeric") {
     const expected = questionData.numericAnswer;

@@ -131,8 +131,9 @@ export function PlayerProfilePage(): JSX.Element {
         if (!mounted) return;
         setError((nextError as Error).message ?? "Failed to load profile");
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 
@@ -147,7 +148,6 @@ export function PlayerProfilePage(): JSX.Element {
     };
   }, []);
 
-  const tieredBadges = useMemo(() => badges.filter((badge) => badge.type === "tiered"), [badges]);
   const discoveryBadges = useMemo(() => badges.filter((badge) => badge.type === "discovery"), [badges]);
   const tieredDefinitions = useMemo(
     () => BADGE_CATALOG.filter((badge) => badge.type === "tiered") as TieredBadgeConfig[],

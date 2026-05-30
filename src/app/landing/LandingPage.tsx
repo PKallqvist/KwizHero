@@ -23,8 +23,9 @@ export function LandingPage(): JSX.Element {
         if (!mounted) return;
         setQuizzes([]);
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 
