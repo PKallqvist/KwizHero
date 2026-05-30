@@ -13,8 +13,11 @@ import {
   Checkbox,
   Group,
   Image,
+  Loader,
   List,
+  Modal,
   NumberInput,
+  PasswordInput,
   Paper,
   Select,
   SegmentedControl,
@@ -28,15 +31,17 @@ import {
   Title,
   VisuallyHidden,
 } from "@mantine/core";
-import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconTrash, IconX } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import {
   buildPlayShareLink,
   checkAccessCodeAvailability,
+  consumeAiToken,
   createDraftQuiz,
   generateAutoAccessCodePreview,
+  getCurrentUserTokens,
   getEditableQuizDraft,
   publishQuiz,
   setQuizCustomAccessCode,
@@ -44,6 +49,8 @@ import {
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
+import { generateAiQuestion, type AiDifficulty, type AiLanguage } from "../../platform/ai/aiGenerator";
+import { buildDraftQuestionFromAiResponse, mapAiErrorToI18nKey } from "./aiQuestionMapping";
 
 const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -53,7 +60,12 @@ type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 type RoutePreviewMode = RouteMode;
 
 const PREVIEW_PRE_REVEAL_SECONDS = 3;
-
+const AI_UNLOCK_STORAGE_KEY = "ai_gen_unlocked";
+const AI_LOADING_LABELS = [
+  "Consulting the oracle...",
+  "Brewing a question...",
+  "Digging through the archives...",
+];
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
 function previewChoiceCardStyle(index: number): CSSProperties {
@@ -378,6 +390,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: null,
+      funFact: undefined,
       config: {
         timerSeconds: null,
         numericTolerance: null,
@@ -393,6 +406,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: "",
+      funFact: undefined,
       config: {
         timerSeconds: null,
         numericTolerance: null,
@@ -407,6 +421,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
     correctChoiceIndexes: [],
     numericAnswer: null,
     letterOrderAnswer: null,
+    funFact: undefined,
     config: {
       timerSeconds: null,
       numericTolerance: null,
@@ -533,6 +548,22 @@ export function CreateQuizPage(): JSX.Element {
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiUnlockModalOpen, setAiUnlockModalOpen] = useState(false);
+  const [aiUnlocked, setAiUnlocked] = useState(false);
+  const [aiPasswordDraft, setAiPasswordDraft] = useState("");
+  const [aiPasswordShake, setAiPasswordShake] = useState(false);
+  const [aiTopic, setAiTopic] = useState("");
+  const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("medium");
+  const [aiQuestionType, setAiQuestionType] = useState<QuestionType>("multiple_choice");
+  const [aiLanguage, setAiLanguage] = useState<AiLanguage>("sv");
+  const [aiChoiceCount, setAiChoiceCount] = useState(4);
+  const [aiCorrectAnswerCount, setAiCorrectAnswerCount] = useState(1);
+  const [aiTokenBalance, setAiTokenBalance] = useState<number | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoadingLabelIndex, setAiLoadingLabelIndex] = useState(0);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPreviewQuestion, setAiPreviewQuestion] = useState<DraftQuestionInput | null>(null);
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -551,6 +582,141 @@ export function CreateQuizPage(): JSX.Element {
   }, [result]);
 
   const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
+  const aiPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
+  const aiPasswordConfigured = aiPassword.length > 0;
+
+  useEffect(() => {
+    setAiUnlocked(localStorage.getItem(AI_UNLOCK_STORAGE_KEY) === "true");
+  }, []);
+
+  useEffect(() => {
+    if (!aiLoading) {
+      setAiLoadingLabelIndex(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setAiLoadingLabelIndex((index) => (index + 1) % AI_LOADING_LABELS.length);
+    }, 1400);
+    return () => clearInterval(timer);
+  }, [aiLoading]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (!aiPasswordConfigured || aiUnlocked) return;
+      if (!(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g")) return;
+      event.preventDefault();
+      setAiUnlockModalOpen(true);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [aiPasswordConfigured, aiUnlocked]);
+
+  useEffect(() => {
+    setAiCorrectAnswerCount((previous) => Math.max(1, Math.min(previous, aiChoiceCount)));
+  }, [aiChoiceCount]);
+
+  async function refreshAiTokenBalance(): Promise<void> {
+    try {
+      const tokens = await getCurrentUserTokens();
+      setAiTokenBalance(tokens.aiTokens);
+    } catch {
+      setAiTokenBalance(0);
+    }
+  }
+
+  function openAiGenerator(): void {
+    setAiError(null);
+    setAiPreviewQuestion(null);
+    setAiTopic("");
+    setAiQuestionType(currentQuestion?.questionType ?? "multiple_choice");
+    setAiLanguage(input.locale === "sv" ? "sv" : "en");
+    if (!aiUnlocked) {
+      setAiUnlockModalOpen(true);
+      return;
+    }
+    setAiPanelOpen(true);
+    void refreshAiTokenBalance();
+  }
+
+  function submitAiUnlock(): void {
+    if (!aiPasswordConfigured) {
+      setAiError(t("creator.questions.aiErrorApiKeyMissing"));
+      return;
+    }
+    if (aiPasswordDraft === aiPassword) {
+      localStorage.setItem(AI_UNLOCK_STORAGE_KEY, "true");
+      setAiUnlocked(true);
+      setAiUnlockModalOpen(false);
+      setAiPasswordDraft("");
+      setAiPanelOpen(true);
+      void refreshAiTokenBalance();
+      return;
+    }
+    setAiPasswordShake(true);
+    window.setTimeout(() => setAiPasswordShake(false), 350);
+  }
+
+  async function generateQuestionWithAi(): Promise<void> {
+    if (!currentQuestion) return;
+    setAiError(null);
+    const topic = aiTopic.trim();
+    if (topic.length < 2) {
+      setAiError(t("creator.questions.aiErrorInvalidJson"));
+      return;
+    }
+
+    const currentBalance = aiTokenBalance ?? 0;
+    if (currentBalance < 1) {
+      setAiError(t("creator.questions.aiNoTokens"));
+      return;
+    }
+
+    setAiLoading(true);
+    setAiPreviewQuestion(null);
+    try {
+      const response = await generateAiQuestion({
+        topic,
+        difficulty: aiDifficulty,
+        questionType: aiQuestionType,
+        language: aiLanguage,
+        choiceCount: aiQuestionType === "multiple_choice" ? aiChoiceCount : undefined,
+        correctAnswerCount: aiQuestionType === "multiple_choice" ? aiCorrectAnswerCount : undefined,
+      });
+
+      const previewQuestion = buildDraftQuestionFromAiResponse({
+        questionType: aiQuestionType,
+        response,
+        config: {
+          ...currentQuestion.config,
+        },
+      });
+
+      try {
+        const tokenUpdate = await consumeAiToken();
+        setAiTokenBalance(tokenUpdate.aiTokens);
+      } catch {
+        setAiError(t("creator.questions.aiErrorTokenUpdate"));
+        setAiPreviewQuestion(null);
+        return;
+      }
+
+      setAiPreviewQuestion(previewQuestion);
+    } catch (error) {
+      setAiError(t(mapAiErrorToI18nKey(error)));
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function applyAiPreviewQuestion(): void {
+    if (!aiPreviewQuestion || !currentQuestion) return;
+    updateCurrentQuestion({
+      ...currentQuestion,
+      ...aiPreviewQuestion,
+    });
+    setAiPanelOpen(false);
+  }
 
   useEffect(() => {
     async function buildQr(): Promise<void> {
@@ -2123,9 +2289,21 @@ export function CreateQuizPage(): JSX.Element {
                   <>
                     <Group justify="space-between" align="center" wrap="nowrap">
                       <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
-                      <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
-                        {t("creator.questions.addCard")}
-                      </Button>
+                      <Group gap="xs" wrap="nowrap">
+                        {aiPasswordConfigured && aiUnlocked ? (
+                          <Button
+                            size="xs"
+                            variant="light"
+                            leftSection={<IconSparkles size={14} />}
+                            onClick={openAiGenerator}
+                          >
+                            {t("creator.questions.generateWithAi")}
+                          </Button>
+                        ) : null}
+                        <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
+                          {t("creator.questions.addCard")}
+                        </Button>
+                      </Group>
                     </Group>
 
                     {currentWaypoint.questions.length === 0 ? (
@@ -2225,6 +2403,16 @@ export function CreateQuizPage(): JSX.Element {
                           >
                             <IconPlus size={14} />
                           </ActionIcon>
+                          {aiPasswordConfigured && aiUnlocked ? (
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              leftSection={<IconSparkles size={12} />}
+                              onClick={openAiGenerator}
+                            >
+                              {t("creator.questions.generateWithAi")}
+                            </Button>
+                          ) : null}
                           <ActionIcon
                             variant="subtle"
                             color="red"
@@ -2923,6 +3111,177 @@ export function CreateQuizPage(): JSX.Element {
             </Card>
           </SimpleGrid>
         ) : null}
+
+        <Modal
+          opened={aiUnlockModalOpen}
+          onClose={() => setAiUnlockModalOpen(false)}
+          title={t("creator.questions.aiUnlockTitle")}
+          centered
+          size="sm"
+        >
+          <Stack className={aiPasswordShake ? "kwiz-ai-shake" : undefined}>
+            <PasswordInput
+              label={t("creator.questions.aiUnlockPassword")}
+              value={aiPasswordDraft}
+              onChange={(event) => setAiPasswordDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  submitAiUnlock();
+                }
+              }}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAiUnlockModalOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button onClick={submitAiUnlock}>{t("creator.questions.aiUnlockAction")}</Button>
+            </Group>
+          </Stack>
+        </Modal>
+
+        <Modal
+          opened={aiPanelOpen}
+          onClose={() => setAiPanelOpen(false)}
+          title={t("creator.questions.generateWithAi")}
+          centered
+          size="lg"
+        >
+          <Stack gap="sm">
+            <Group justify="space-between" align="center">
+              <Text size="sm" c="dimmed">{t("creator.questions.aiPanelSubtitle")}</Text>
+              <Badge color={(aiTokenBalance ?? 0) > 0 ? "teal" : "orange"} variant="light">
+                {(aiTokenBalance ?? 0) > 0
+                  ? t("creator.questions.aiTokensRemaining", { count: aiTokenBalance ?? 0 })
+                  : t("creator.questions.aiNoTokens")}
+              </Badge>
+            </Group>
+
+            <TextInput
+              label={t("creator.questions.aiTopic")}
+              placeholder={t("creator.questions.aiTopicPlaceholder")}
+              value={aiTopic}
+              onChange={(event) => setAiTopic(event.currentTarget.value)}
+            />
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <SegmentedControl
+                fullWidth
+                data={[
+                  { value: "easy", label: t("creator.questions.aiDifficultyEasy") },
+                  { value: "medium", label: t("creator.questions.aiDifficultyMedium") },
+                  { value: "hard", label: t("creator.questions.aiDifficultyHard") },
+                ]}
+                value={aiDifficulty}
+                onChange={(value) => setAiDifficulty(value as AiDifficulty)}
+              />
+              <SegmentedControl
+                fullWidth
+                data={[
+                  { value: "multiple_choice", label: "A/B/C" },
+                  { value: "numeric", label: "123" },
+                  { value: "letter_order", label: "ABC" },
+                ]}
+                value={aiQuestionType}
+                onChange={(value) => setAiQuestionType(value as QuestionType)}
+              />
+            </SimpleGrid>
+
+            <Select
+              label={t("creator.questions.aiLanguage")}
+              data={[
+                { value: "sv", label: "Svenska" },
+                { value: "en", label: "English" },
+              ]}
+              value={aiLanguage}
+              onChange={(value) => setAiLanguage((value ?? "sv") as AiLanguage)}
+            />
+
+            {aiQuestionType === "multiple_choice" ? (
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                <NumberInput
+                  label={t("creator.questions.aiChoiceCount")}
+                  min={2}
+                  max={8}
+                  value={aiChoiceCount}
+                  onChange={(value) => setAiChoiceCount(typeof value === "number" ? value : 4)}
+                />
+                <NumberInput
+                  label={t("creator.questions.aiCorrectAnswerCount")}
+                  min={1}
+                  max={aiChoiceCount}
+                  value={aiCorrectAnswerCount}
+                  onChange={(value) => setAiCorrectAnswerCount(typeof value === "number" ? value : 1)}
+                />
+              </SimpleGrid>
+            ) : null}
+
+            {aiError ? (
+              <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />}>
+                {aiError}
+              </Alert>
+            ) : null}
+
+            {aiLoading ? (
+              <Paper withBorder radius="md" p="md">
+                <Stack align="center" gap="xs">
+                  <Loader size="sm" />
+                  <Text size="sm">{AI_LOADING_LABELS[aiLoadingLabelIndex]}</Text>
+                </Stack>
+              </Paper>
+            ) : null}
+
+            {aiPreviewQuestion ? (
+              <Card withBorder radius="md" p="sm">
+                <Stack gap="xs">
+                  <Text fw={600}>{aiPreviewQuestion.text}</Text>
+                  {aiPreviewQuestion.questionType === "multiple_choice" ? (
+                    <Stack gap={4}>
+                      {aiPreviewQuestion.choices.map((choice, index) => (
+                        <Text key={`ai-preview-choice-${index}`} size="sm">
+                          {`${index + 1}. ${choice}${aiPreviewQuestion.correctChoiceIndexes.includes(index) ? "  ✓" : ""}`}
+                        </Text>
+                      ))}
+                    </Stack>
+                  ) : null}
+                  {aiPreviewQuestion.questionType === "numeric" ? (
+                    <Text size="sm">{`${t("creator.questions.numericAnswer")}: ${String(aiPreviewQuestion.numericAnswer ?? "")}`}</Text>
+                  ) : null}
+                  {aiPreviewQuestion.questionType === "letter_order" ? (
+                    <Text size="sm">{`${t("creator.questions.letterOrderAnswer")}: ${aiPreviewQuestion.letterOrderAnswer ?? ""}`}</Text>
+                  ) : null}
+                </Stack>
+              </Card>
+            ) : null}
+
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAiPanelOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              {aiPreviewQuestion ? (
+                <>
+                  <Button
+                    variant="light"
+                    onClick={() => void generateQuestionWithAi()}
+                    disabled={aiLoading || (aiTokenBalance ?? 0) < 1}
+                  >
+                    {t("creator.questions.aiRegenerate")}
+                  </Button>
+                  <Button onClick={applyAiPreviewQuestion}>{t("creator.questions.aiUseQuestion")}</Button>
+                </>
+              ) : (
+                <Button
+                  leftSection={<IconSparkles size={14} />}
+                  onClick={() => void generateQuestionWithAi()}
+                  loading={aiLoading}
+                  disabled={(aiTokenBalance ?? 0) < 1}
+                >
+                  {t("creator.questions.aiGenerate")}
+                </Button>
+              )}
+            </Group>
+          </Stack>
+        </Modal>
 
         <Group justify="space-between">
           <Button variant="default" onClick={previousStep} disabled={step === 1}>

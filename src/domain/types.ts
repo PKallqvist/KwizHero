@@ -31,7 +31,16 @@ export interface DraftQuestionInput {
   correctChoiceIndexes: number[];
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
+  funFact?: string;
   config: QuestionConfig;
+}
+
+export interface UserTokens {
+  aiTokens: number;
+  aiTokensGranted: number;
+  aiTokensPurchased: number;
+  aiTokensUsed: number;
+  aiTokensResetDate: string | null;
 }
 
 export interface DraftWaypointInput {
@@ -106,6 +115,7 @@ export interface QuizWalkQuestion {
   order: number;
   questionType: QuestionType;
   text: string;
+  funFact?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;
@@ -143,6 +153,7 @@ export interface WaypointQuestion {
   id: string;
   questionType: QuestionType;
   text: string;
+  funFact?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;

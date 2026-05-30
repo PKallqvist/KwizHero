@@ -34,6 +34,7 @@ import type {
   QuizSummary,
   QuizWalk,
   QuestionType,
+  UserTokens,
 } from "../../domain/types";
 
 async function getAnonymousUid(): Promise<string> {
@@ -50,6 +51,16 @@ export async function getCurrentUserUid(): Promise<string> {
 export interface PlayerBadgeProgressSnapshot extends BadgeProgressState {
   firstDiscoverySeen: boolean;
   firstDiscoveryProfileLabelSeen: boolean;
+  aiTokens: number;
+  aiTokensGranted: number;
+  aiTokensPurchased: number;
+  aiTokensUsed: number;
+  aiTokensResetDate: string | null;
+}
+
+export interface AiTokenConsumeResult {
+  aiTokens: number;
+  aiTokensUsed: number;
 }
 
 function buildBadgeUnlockId(event: BadgeUnlockEvent): string {
@@ -59,6 +70,16 @@ function buildBadgeUnlockId(event: BadgeUnlockEvent): string {
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function getDefaultAiTokensResetDate(): string {
+  const now = new Date();
+  return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function normalizeTokenNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
 }
 
 export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnapshot> {
@@ -78,7 +99,17 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
     earnedDiscoveryBadgeIds?: unknown;
     firstDiscoverySeen?: boolean;
     firstDiscoveryProfileLabelSeen?: boolean;
+    aiTokens?: number;
+    aiTokensGranted?: number;
+    aiTokensPurchased?: number;
+    aiTokensUsed?: number;
+    aiTokensResetDate?: string | null;
   } | undefined;
+
+  const aiTokensResetDate =
+    typeof profileData?.aiTokensResetDate === "string" && profileData.aiTokensResetDate.trim().length > 0
+      ? profileData.aiTokensResetDate
+      : getDefaultAiTokensResetDate();
 
   return {
     quizzesCompleted: typeof profileData?.quizzesCompleted === "number" ? profileData.quizzesCompleted : 0,
@@ -102,6 +133,11 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
     earnedDiscoveryBadgeIds: normalizeStringArray(profileData?.earnedDiscoveryBadgeIds),
     firstDiscoverySeen: profileData?.firstDiscoverySeen ?? false,
     firstDiscoveryProfileLabelSeen: profileData?.firstDiscoveryProfileLabelSeen ?? false,
+    aiTokens: normalizeTokenNumber(profileData?.aiTokens),
+    aiTokensGranted: normalizeTokenNumber(profileData?.aiTokensGranted),
+    aiTokensPurchased: normalizeTokenNumber(profileData?.aiTokensPurchased),
+    aiTokensUsed: normalizeTokenNumber(profileData?.aiTokensUsed),
+    aiTokensResetDate,
   };
 }
 
@@ -122,10 +158,72 @@ export async function savePlayerBadgeProgress(progress: PlayerBadgeProgressSnaps
       earnedDiscoveryBadgeIds: [...new Set(progress.earnedDiscoveryBadgeIds)],
       firstDiscoverySeen: progress.firstDiscoverySeen,
       firstDiscoveryProfileLabelSeen: progress.firstDiscoveryProfileLabelSeen,
+      aiTokens: normalizeTokenNumber(progress.aiTokens),
+      aiTokensGranted: normalizeTokenNumber(progress.aiTokensGranted),
+      aiTokensPurchased: normalizeTokenNumber(progress.aiTokensPurchased),
+      aiTokensUsed: normalizeTokenNumber(progress.aiTokensUsed),
+      aiTokensResetDate: progress.aiTokensResetDate ?? getDefaultAiTokensResetDate(),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
+}
+
+export async function getCurrentUserTokens(): Promise<UserTokens> {
+  const progress = await getPlayerBadgeProgress();
+  return {
+    aiTokens: progress.aiTokens,
+    aiTokensGranted: progress.aiTokensGranted,
+    aiTokensPurchased: progress.aiTokensPurchased,
+    aiTokensUsed: progress.aiTokensUsed,
+    aiTokensResetDate: progress.aiTokensResetDate,
+  };
+}
+
+export async function consumeAiToken(): Promise<AiTokenConsumeResult> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const profileRef = doc(db, "playerProfiles", uid);
+
+  return runTransaction(db, async (transaction) => {
+    const profileSnapshot = await transaction.get(profileRef);
+    const profileData = (profileSnapshot.data() as {
+      aiTokens?: unknown;
+      aiTokensUsed?: unknown;
+      aiTokensResetDate?: unknown;
+    } | undefined) ?? {};
+
+    const currentTokens = normalizeTokenNumber(profileData.aiTokens);
+    const currentUsed = normalizeTokenNumber(profileData.aiTokensUsed);
+    const nextResetDate =
+      typeof profileData.aiTokensResetDate === "string" && profileData.aiTokensResetDate.trim().length > 0
+        ? profileData.aiTokensResetDate
+        : getDefaultAiTokensResetDate();
+
+    if (currentTokens < 1) {
+      const tokenError = new Error("No tokens remaining") as Error & { code?: string };
+      tokenError.code = "no-ai-tokens";
+      throw tokenError;
+    }
+
+    const nextTokens = currentTokens - 1;
+    const nextUsed = currentUsed + 1;
+    transaction.set(
+      profileRef,
+      {
+        aiTokens: nextTokens,
+        aiTokensUsed: nextUsed,
+        aiTokensResetDate: nextResetDate,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return {
+      aiTokens: nextTokens,
+      aiTokensUsed: nextUsed,
+    };
+  });
 }
 
 export async function storePlayerBadgeUnlocks(events: BadgeUnlockEvent[]): Promise<void> {
@@ -587,6 +685,7 @@ function fromQuestionDoc(questionData: {
   numericAnswer?: number | null;
   numericTolerance?: number | null;
   letterOrderAnswer?: string | null;
+  funFact?: string | null;
   timerSeconds?: number | null;
 }): QuizDraftInput["waypoints"][number]["questions"][number] {
   const normalizedChoices = (questionData.choices ?? []).map((choice) => choice.text ?? "");
@@ -608,6 +707,7 @@ function fromQuestionDoc(questionData: {
     correctChoiceIndexes,
     numericAnswer: questionData.numericAnswer ?? null,
     letterOrderAnswer: questionData.letterOrderAnswer ?? null,
+    funFact: questionData.funFact ?? undefined,
     config: {
       timerSeconds: questionData.timerSeconds ?? null,
       numericTolerance: questionData.numericTolerance ?? null,
@@ -661,6 +761,7 @@ async function persistQuizWaypoints(quizId: string, waypoints: QuizDraftInput["w
         numericAnswer: question.numericAnswer,
         numericTolerance: question.config.numericTolerance,
         letterOrderAnswer: question.letterOrderAnswer,
+        funFact: question.funFact ?? null,
         timerSeconds: question.config.timerSeconds,
         pointsIfCorrect: 1,
         createdAt: serverTimestamp(),
@@ -807,6 +908,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
           numericAnswer?: number | null;
           numericTolerance?: number | null;
           letterOrderAnswer?: string | null;
+          funFact?: string | null;
           timerSeconds?: number | null;
         })),
       };
@@ -1339,6 +1441,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             order: number;
             questionType?: QuestionType;
             text: string;
+            funFact?: string | null;
             choices: Array<{ id: string; text: string }>;
             pointsIfCorrect: number;
             timerSeconds?: number | null;
@@ -1348,6 +1451,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             order: questionData.order,
             questionType: questionData.questionType ?? "multiple_choice",
             text: questionData.text,
+            funFact: questionData.funFact ?? undefined,
             choices: questionData.choices ?? [],
             pointsIfCorrect: questionData.pointsIfCorrect,
             config: {

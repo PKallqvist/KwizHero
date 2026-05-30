@@ -2259,6 +2259,18 @@ body {
   margin: 0 auto 16px;
 }
 
+@keyframes kwiz-ai-shake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  75% { transform: translateX(-4px); }
+  100% { transform: translateX(0); }
+}
+
+.kwiz-ai-shake {
+  animation: kwiz-ai-shake 220ms ease-in-out;
+}
+
 .kwiz-drawer-item {
   width: 100%;
   display: flex;
