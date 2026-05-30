@@ -68,6 +68,11 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
 
   const profileData = profileDoc.data() as {
     quizzesCompleted?: number;
+    quizzesCreatedPublished?: number;
+    quizzesPlayedTotal?: number;
+    playStreakDays?: number;
+    perfectQuizzesCompleted?: number;
+    lastCompletedQuizDate?: string | null;
     triggeredEventKeys?: unknown;
     earnedTierByBadgeId?: Record<string, unknown>;
     earnedDiscoveryBadgeIds?: unknown;
@@ -77,6 +82,16 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
 
   return {
     quizzesCompleted: typeof profileData?.quizzesCompleted === "number" ? profileData.quizzesCompleted : 0,
+    quizzesCreatedPublished:
+      typeof profileData?.quizzesCreatedPublished === "number" ? profileData.quizzesCreatedPublished : 0,
+    quizzesPlayedTotal: typeof profileData?.quizzesPlayedTotal === "number" ? profileData.quizzesPlayedTotal : 0,
+    playStreakDays: typeof profileData?.playStreakDays === "number" ? profileData.playStreakDays : 0,
+    perfectQuizzesCompleted:
+      typeof profileData?.perfectQuizzesCompleted === "number" ? profileData.perfectQuizzesCompleted : 0,
+    lastCompletedQuizDate:
+      typeof profileData?.lastCompletedQuizDate === "string" && profileData.lastCompletedQuizDate.trim().length > 0
+        ? profileData.lastCompletedQuizDate
+        : null,
     triggeredEventKeys: normalizeStringArray(profileData?.triggeredEventKeys),
     earnedTierByBadgeId: Object.fromEntries(
       Object.entries(profileData?.earnedTierByBadgeId ?? {}).flatMap(([badgeId, tier]) => {
@@ -97,6 +112,11 @@ export async function savePlayerBadgeProgress(progress: PlayerBadgeProgressSnaps
     doc(db, "playerProfiles", uid),
     {
       quizzesCompleted: progress.quizzesCompleted,
+      quizzesCreatedPublished: progress.quizzesCreatedPublished,
+      quizzesPlayedTotal: progress.quizzesPlayedTotal,
+      playStreakDays: progress.playStreakDays,
+      perfectQuizzesCompleted: progress.perfectQuizzesCompleted,
+      lastCompletedQuizDate: progress.lastCompletedQuizDate,
       triggeredEventKeys: [...new Set(progress.triggeredEventKeys)],
       earnedTierByBadgeId: progress.earnedTierByBadgeId,
       earnedDiscoveryBadgeIds: [...new Set(progress.earnedDiscoveryBadgeIds)],
@@ -959,6 +979,34 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
   });
 }
 
+export async function getCreatorTotalCompletedPlays(): Promise<number> {
+  const { db } = getFirebaseServices();
+  const creatorUid = await getAnonymousUid();
+  const quizzesSnapshot = await getDocs(query(collection(db, "quizzes"), where("creatorUid", "==", creatorUid)));
+  if (quizzesSnapshot.empty) return 0;
+
+  const sessionSnapshots = await Promise.all(
+    quizzesSnapshot.docs.map((quizDoc) =>
+      getDocs(
+        query(
+          collection(db, "participantSessions"),
+          where("quizId", "==", quizDoc.id),
+          where("status", "==", "completed")
+        )
+      ).catch(() => null)
+    )
+  );
+
+  return sessionSnapshots.reduce((sum, snapshot) => {
+    if (!snapshot) return sum;
+    const otherPlayersCount = snapshot.docs.filter((sessionDoc) => {
+      const data = sessionDoc.data() as { anonymousUid?: string };
+      return typeof data.anonymousUid === "string" && data.anonymousUid !== creatorUid;
+    }).length;
+    return sum + otherPlayersCount;
+  }, 0);
+}
+
 async function loadQuizDiscoveryItem(quizDoc: { id: string; data: () => unknown }): Promise<PublishedQuizDiscoveryItem> {
   const { db } = getFirebaseServices();
   const data = quizDoc.data() as {
@@ -1163,6 +1211,7 @@ export async function publishQuiz(quizId: string, _editKey: string): Promise<voi
   void _editKey;
   const { db } = getFirebaseServices();
   await assertQuizOwnership(quizId);
+  const uid = await getAnonymousUid();
 
   const quizDoc = await getDoc(doc(db, "quizzes", quizId));
   if (!quizDoc.exists()) {
@@ -1182,6 +1231,21 @@ export async function publishQuiz(quizId: string, _editKey: string): Promise<voi
     isPublic: (data as { isPublic?: boolean }).isPublic ?? false,
     publishedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  });
+
+  const publishedCountSnapshot = await getCountFromServer(
+    query(
+      collection(db, "quizzes"),
+      where("creatorUid", "==", uid),
+      where("status", "==", "published")
+    )
+  );
+  const publishedCount = publishedCountSnapshot.data().count;
+  const progress = await getPlayerBadgeProgress();
+  await savePlayerBadgeProgress({
+    ...progress,
+    quizzesCreatedPublished: Math.max(progress.quizzesCreatedPublished, publishedCount),
+    quizzesPlayedTotal: progress.quizzesPlayedTotal,
   });
 }
 

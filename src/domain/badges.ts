@@ -28,7 +28,12 @@ interface BadgeBaseConfig {
 
 export interface TieredBadgeConfig extends BadgeBaseConfig {
   type: "tiered";
-  progressionMetric: "quizzes_completed";
+  progressionMetric:
+    | "quizzes_completed"
+    | "quizzes_created_published"
+    | "quizzes_played_total"
+    | "play_streak_days"
+    | "perfect_quizzes_completed";
   description: BadgeText;
   tiers: BadgeTierConfig[];
 }
@@ -52,6 +57,11 @@ export interface EarnedBadgeRecord {
 
 export interface BadgeProgressState {
   quizzesCompleted: number;
+  quizzesCreatedPublished: number;
+  quizzesPlayedTotal: number;
+  playStreakDays: number;
+  perfectQuizzesCompleted: number;
+  lastCompletedQuizDate: string | null;
   triggeredEventKeys: string[];
   earnedTierByBadgeId: Record<string, number>;
   earnedDiscoveryBadgeIds: string[];
@@ -98,7 +108,7 @@ export const BADGE_CATALOG = [
         level: "iron",
         name: makeLocalizedText("Iron", "Järn"),
         flavourText: makeLocalizedText("Solid routine. You are building momentum.", "Stabil rutin. Du bygger upp fart."),
-        unlockValue: 3,
+        unlockValue: 1,
         xpReward: 25,
         imageKey: "trophy-iron.png",
       },
@@ -107,7 +117,7 @@ export const BADGE_CATALOG = [
         level: "bronze",
         name: makeLocalizedText("Bronze", "Brons"),
         flavourText: makeLocalizedText("You are now a known finisher.", "Du är nu en etablerad avslutare."),
-        unlockValue: 6,
+        unlockValue: 10,
         xpReward: 50,
         imageKey: "trophy-bronze.png",
       },
@@ -116,7 +126,7 @@ export const BADGE_CATALOG = [
         level: "silver",
         name: makeLocalizedText("Silver", "Silver"),
         flavourText: makeLocalizedText("Consistency turns into mastery.", "Konsekvens börjar bli mästerskap."),
-        unlockValue: 10,
+        unlockValue: 50,
         xpReward: 100,
         imageKey: "trophy-silver.png",
       },
@@ -125,7 +135,7 @@ export const BADGE_CATALOG = [
         level: "gold",
         name: makeLocalizedText("Gold", "Guld"),
         flavourText: makeLocalizedText("Top-tier endurance. Almost legendary.", "Topputhållighet. Nästan legendariskt."),
-        unlockValue: 20,
+        unlockValue: 100,
         xpReward: 200,
         imageKey: "trophy-gold.png",
       },
@@ -134,7 +144,7 @@ export const BADGE_CATALOG = [
         level: "platinum",
         name: makeLocalizedText("Platinum", "Platina"),
         flavourText: makeLocalizedText("Legend status unlocked.", "Legendstatus upplåst."),
-        unlockValue: 35,
+        unlockValue: 200,
         xpReward: 350,
         imageKey: "trophy-platinum.png",
       },
@@ -143,21 +153,21 @@ export const BADGE_CATALOG = [
   {
     id: "quiz_crafter",
     type: "tiered",
-    name: makeLocalizedText("Quiz crafter", "Quizskapare"),
+    name: makeLocalizedText("Quiz Jockey", "Quizjockey"),
     icon: "ti-pencil",
     description: makeLocalizedText(
-      "Design and launch quizzes to sharpen your craft.",
-      "Designa och publicera quiz för att vässa ditt hantverk."
+      "Craft sets people come back for.",
+      "Skapa quizset som folk kommer tillbaka till."
     ),
     imageKey: null,
-    progressionMetric: "quizzes_completed",
+    progressionMetric: "quizzes_created_published",
     tiers: [
       {
         tier: 1,
         level: "wood",
         name: makeLocalizedText("Wood", "Trä"),
-        flavourText: makeLocalizedText("First draft done. The studio is open.", "Första utkastet klart. Studion är öppen."),
-        unlockValue: 2,
+        flavourText: makeLocalizedText("First record pressed", "Första skivan pressad"),
+        unlockValue: 1,
         xpReward: 20,
         imageKey: "trophy-wood.png",
       },
@@ -165,8 +175,8 @@ export const BADGE_CATALOG = [
         tier: 2,
         level: "iron",
         name: makeLocalizedText("Iron", "Järn"),
-        flavourText: makeLocalizedText("Your design instincts are forming.", "Din designkänsla börjar ta form."),
-        unlockValue: 4,
+        flavourText: makeLocalizedText("Building a setlist", "Bygger en setlist"),
+        unlockValue: 5,
         xpReward: 30,
         imageKey: "trophy-iron.png",
       },
@@ -174,8 +184,8 @@ export const BADGE_CATALOG = [
         tier: 3,
         level: "bronze",
         name: makeLocalizedText("Bronze", "Brons"),
-        flavourText: makeLocalizedText("Your quizzes now have signature style.", "Dina quiz börjar få en tydlig stil."),
-        unlockValue: 7,
+        flavourText: makeLocalizedText("The dancefloor is filling up", "Dansgolvet fylls upp"),
+        unlockValue: 15,
         xpReward: 60,
         imageKey: "trophy-bronze.png",
       },
@@ -183,8 +193,8 @@ export const BADGE_CATALOG = [
         tier: 4,
         level: "silver",
         name: makeLocalizedText("Silver", "Silver"),
-        flavourText: makeLocalizedText("Structure and pacing feel professional.", "Struktur och tempo känns professionellt."),
-        unlockValue: 12,
+        flavourText: makeLocalizedText("They're requesting your tracks", "De ber om dina tracks"),
+        unlockValue: 30,
         xpReward: 120,
         imageKey: "trophy-silver.png",
       },
@@ -192,8 +202,8 @@ export const BADGE_CATALOG = [
         tier: 5,
         level: "gold",
         name: makeLocalizedText("Gold", "Guld"),
-        flavourText: makeLocalizedText("Players remember your creations.", "Spelare minns dina skapelser."),
-        unlockValue: 22,
+        flavourText: makeLocalizedText("Headliner material", "Headliner-material"),
+        unlockValue: 60,
         xpReward: 220,
         imageKey: "trophy-gold.png",
       },
@@ -201,9 +211,77 @@ export const BADGE_CATALOG = [
         tier: 6,
         level: "platinum",
         name: makeLocalizedText("Platinum", "Platina"),
-        flavourText: makeLocalizedText("Master designer. Every route tells a story.", "Mästerdesigner. Varje rutt berättar en historia."),
-        unlockValue: 36,
+        flavourText: makeLocalizedText("Legendary set", "Legendarisk set"),
+        unlockValue: 100,
         xpReward: 360,
+        imageKey: "trophy-platinum.png",
+      },
+    ],
+  },
+  {
+    id: "sage",
+    type: "tiered",
+    name: makeLocalizedText("Sage", "Sage"),
+    icon: "ti-star",
+    description: makeLocalizedText(
+      "Your quizzes are being played across the map.",
+      "Dina quiz spelas runt om på kartan."
+    ),
+    imageKey: null,
+    progressionMetric: "quizzes_played_total",
+    tiers: [
+      {
+        tier: 1,
+        level: "wood",
+        name: makeLocalizedText("Wood", "Trä"),
+        flavourText: makeLocalizedText("Your first students have arrived", "Dina första elever har kommit"),
+        unlockValue: 10,
+        xpReward: 20,
+        imageKey: "trophy-wood.png",
+      },
+      {
+        tier: 2,
+        level: "iron",
+        name: makeLocalizedText("Iron", "Järn"),
+        flavourText: makeLocalizedText("Word is spreading", "Ryktet sprider sig"),
+        unlockValue: 50,
+        xpReward: 35,
+        imageKey: "trophy-iron.png",
+      },
+      {
+        tier: 3,
+        level: "bronze",
+        name: makeLocalizedText("Bronze", "Brons"),
+        flavourText: makeLocalizedText("You're leaving a mark", "Du lämnar avtryck"),
+        unlockValue: 200,
+        xpReward: 70,
+        imageKey: "trophy-bronze.png",
+      },
+      {
+        tier: 4,
+        level: "silver",
+        name: makeLocalizedText("Silver", "Silver"),
+        flavourText: makeLocalizedText("People seek out your quizzes", "Folk söker upp dina quiz"),
+        unlockValue: 500,
+        xpReward: 130,
+        imageKey: "trophy-silver.png",
+      },
+      {
+        tier: 5,
+        level: "gold",
+        name: makeLocalizedText("Gold", "Guld"),
+        flavourText: makeLocalizedText("Knowledge travels far", "Kunskap reser långt"),
+        unlockValue: 1000,
+        xpReward: 240,
+        imageKey: "trophy-gold.png",
+      },
+      {
+        tier: 6,
+        level: "platinum",
+        name: makeLocalizedText("Platinum", "Platina"),
+        flavourText: makeLocalizedText("A legend in the making", "En legend under uppbyggnad"),
+        unlockValue: 5000,
+        xpReward: 380,
         imageKey: "trophy-platinum.png",
       },
     ],
@@ -218,7 +296,7 @@ export const BADGE_CATALOG = [
       "Håll uppe farten och kedja slutföranden."
     ),
     imageKey: null,
-    progressionMetric: "quizzes_completed",
+    progressionMetric: "play_streak_days",
     tiers: [
       {
         tier: 1,
@@ -234,7 +312,7 @@ export const BADGE_CATALOG = [
         level: "iron",
         name: makeLocalizedText("Iron", "Järn"),
         flavourText: makeLocalizedText("Your pace is hard to ignore.", "Ditt tempo går inte att ignorera."),
-        unlockValue: 5,
+        unlockValue: 3,
         xpReward: 32,
         imageKey: "trophy-iron.png",
       },
@@ -243,7 +321,7 @@ export const BADGE_CATALOG = [
         level: "bronze",
         name: makeLocalizedText("Bronze", "Brons"),
         flavourText: makeLocalizedText("Momentum is now a habit.", "Farten har blivit en vana."),
-        unlockValue: 8,
+        unlockValue: 10,
         xpReward: 65,
         imageKey: "trophy-bronze.png",
       },
@@ -252,7 +330,7 @@ export const BADGE_CATALOG = [
         level: "silver",
         name: makeLocalizedText("Silver", "Silver"),
         flavourText: makeLocalizedText("You blaze through every challenge.", "Du tar dig igenom varje utmaning med glöd."),
-        unlockValue: 13,
+        unlockValue: 30,
         xpReward: 125,
         imageKey: "trophy-silver.png",
       },
@@ -261,7 +339,7 @@ export const BADGE_CATALOG = [
         level: "gold",
         name: makeLocalizedText("Gold", "Guld"),
         flavourText: makeLocalizedText("You are heat and precision combined.", "Du är hetta och precision i ett."),
-        unlockValue: 24,
+        unlockValue: 100,
         xpReward: 230,
         imageKey: "trophy-gold.png",
       },
@@ -270,7 +348,7 @@ export const BADGE_CATALOG = [
         level: "platinum",
         name: makeLocalizedText("Platinum", "Platina"),
         flavourText: makeLocalizedText("You set the pace for everyone else.", "Du sätter tempot för alla andra."),
-        unlockValue: 38,
+        unlockValue: 200,
         xpReward: 365,
         imageKey: "trophy-platinum.png",
       },
@@ -286,14 +364,14 @@ export const BADGE_CATALOG = [
       "Sikta mot felfria rundor och skarp precision."
     ),
     imageKey: null,
-    progressionMetric: "quizzes_completed",
+    progressionMetric: "perfect_quizzes_completed",
     tiers: [
       {
         tier: 1,
         level: "wood",
         name: makeLocalizedText("Wood", "Trä"),
         flavourText: makeLocalizedText("The pursuit of perfect starts now.", "Jakten på det perfekta börjar nu."),
-        unlockValue: 4,
+        unlockValue: 1,
         xpReward: 22,
         imageKey: "trophy-wood.png",
       },
@@ -302,7 +380,7 @@ export const BADGE_CATALOG = [
         level: "iron",
         name: makeLocalizedText("Iron", "Järn"),
         flavourText: makeLocalizedText("Small details begin to matter.", "Små detaljer börjar spela roll."),
-        unlockValue: 6,
+        unlockValue: 1,
         xpReward: 35,
         imageKey: "trophy-iron.png",
       },
@@ -311,7 +389,7 @@ export const BADGE_CATALOG = [
         level: "bronze",
         name: makeLocalizedText("Bronze", "Brons"),
         flavourText: makeLocalizedText("Clean runs become your standard.", "Rena rundor blir din standard."),
-        unlockValue: 9,
+        unlockValue: 5,
         xpReward: 70,
         imageKey: "trophy-bronze.png",
       },
@@ -320,7 +398,7 @@ export const BADGE_CATALOG = [
         level: "silver",
         name: makeLocalizedText("Silver", "Silver"),
         flavourText: makeLocalizedText("Your execution is razor sharp.", "Din genomföring är knivskarp."),
-        unlockValue: 14,
+        unlockValue: 20,
         xpReward: 130,
         imageKey: "trophy-silver.png",
       },
@@ -329,7 +407,7 @@ export const BADGE_CATALOG = [
         level: "gold",
         name: makeLocalizedText("Gold", "Guld"),
         flavourText: makeLocalizedText("Near-perfect is your default mode.", "Nära perfekt är ditt normalläge."),
-        unlockValue: 26,
+        unlockValue: 50,
         xpReward: 240,
         imageKey: "trophy-gold.png",
       },
@@ -338,7 +416,7 @@ export const BADGE_CATALOG = [
         level: "platinum",
         name: makeLocalizedText("Platinum", "Platina"),
         flavourText: makeLocalizedText("Nothing left to polish. Pure mastery.", "Inget mer att putsa. Ren mästarklass."),
-        unlockValue: 40,
+        unlockValue: 100,
         xpReward: 380,
         imageKey: "trophy-platinum.png",
       },
@@ -440,13 +518,30 @@ function getHighestUnlockedTier(badge: TieredBadgeConfig, progressValue: number)
   return eligibleTiers.at(-1) ?? null;
 }
 
+function getProgressValueForBadge(progress: BadgeProgressState, badge: TieredBadgeConfig): number {
+  switch (badge.progressionMetric) {
+    case "quizzes_created_published":
+      return progress.quizzesCreatedPublished;
+    case "quizzes_played_total":
+      return progress.quizzesPlayedTotal;
+    case "play_streak_days":
+      return progress.playStreakDays;
+    case "perfect_quizzes_completed":
+      return progress.perfectQuizzesCompleted;
+    case "quizzes_completed":
+    default:
+      return progress.quizzesCompleted;
+  }
+}
+
 export function evaluateBadgeUnlocks(progress: BadgeProgressState, locale: BadgeLocale): BadgeUnlockEvent[] {
   const events: BadgeUnlockEvent[] = [];
 
   for (const badge of BADGE_CATALOG) {
     if (badge.type === "tiered") {
       const currentTier = progress.earnedTierByBadgeId[badge.id] ?? 0;
-      const targetTier = getHighestUnlockedTier(badge, progress.quizzesCompleted)?.tier ?? 0;
+      const progressValue = getProgressValueForBadge(progress, badge);
+      const targetTier = getHighestUnlockedTier(badge, progressValue)?.tier ?? 0;
 
       for (let tier = currentTier + 1; tier <= targetTier; tier += 1) {
         const tierConfig = badge.tiers.find((entry) => entry.tier === tier);

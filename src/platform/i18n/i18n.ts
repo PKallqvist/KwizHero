@@ -265,6 +265,7 @@ const resources = {
           editingBannerBody: "You are editing quiz {{quizId}}. Save updates here, then publish when you have the original edit key.",
           backToMyQuizzes: "Back to My quizzes",
           editNotAllowedPublished: "This quiz is already published and can no longer be edited as a draft.",
+          errorIdentityRequired: "Title and description are required.",
         },
       },
       player: {
@@ -662,6 +663,7 @@ const resources = {
           editingBannerBody: "Du redigerar quiz {{quizId}}. Spara ändringar här och publicera när du har den ursprungliga redigeringsnyckeln.",
           backToMyQuizzes: "Tillbaka till Mina quiz",
           editNotAllowedPublished: "Det här quizet är redan publicerat och kan inte längre redigeras som utkast.",
+          errorIdentityRequired: "Titel och beskrivning är obligatoriska.",
         },
       },
       player: {

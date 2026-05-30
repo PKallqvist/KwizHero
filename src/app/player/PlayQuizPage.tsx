@@ -888,12 +888,50 @@ export function PlayQuizPage(): JSX.Element {
     return keys;
   }
 
-  async function queueBadgeUnlocksForCompletion(): Promise<void> {
+  function toLocalDateKey(value: Date): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function isConsecutiveDay(previousDateKey: string, currentDateKey: string): boolean {
+    const previous = new Date(`${previousDateKey}T00:00:00`);
+    const current = new Date(`${currentDateKey}T00:00:00`);
+    if (Number.isNaN(previous.getTime()) || Number.isNaN(current.getTime())) return false;
+    const deltaMs = current.getTime() - previous.getTime();
+    return deltaMs === 24 * 60 * 60 * 1000;
+  }
+
+  async function queueBadgeUnlocksForCompletion(params: {
+    completedAt: Date;
+    isPerfectCompletion: boolean;
+  }): Promise<void> {
+    if (debugMode) return;
+    if ((summary?.status ?? "draft") !== "published") return;
+
     const progress = await getPlayerBadgeProgress();
-    const completionTriggerKeys = resolveCompletionTriggerEventKeys(new Date());
+    const completionTriggerKeys = resolveCompletionTriggerEventKeys(params.completedAt);
+    const completionDateKey = toLocalDateKey(params.completedAt);
+    let nextStreakDays: number;
+    if (progress.lastCompletedQuizDate === completionDateKey) {
+      nextStreakDays = Math.max(1, progress.playStreakDays);
+    } else if (
+      progress.lastCompletedQuizDate &&
+      isConsecutiveDay(progress.lastCompletedQuizDate, completionDateKey)
+    ) {
+      nextStreakDays = Math.max(1, progress.playStreakDays + 1);
+    } else {
+      nextStreakDays = 1;
+    }
+
     const nextProgress = {
       ...progress,
       quizzesCompleted: progress.quizzesCompleted + 1,
+      quizzesPlayedTotal: progress.quizzesPlayedTotal,
+      perfectQuizzesCompleted: progress.perfectQuizzesCompleted + (params.isPerfectCompletion ? 1 : 0),
+      playStreakDays: nextStreakDays,
+      lastCompletedQuizDate: completionDateKey,
       triggeredEventKeys: [...new Set([...progress.triggeredEventKeys, ...completionTriggerKeys])],
     };
 
@@ -1014,8 +1052,16 @@ export function PlayQuizPage(): JSX.Element {
 
       const nextWaypointIndex = getNextWaypointIndex(nextAnswered);
       if (nextWaypointIndex === null) {
+        const totalQuestionCount = quizWalk.waypoints.reduce(
+          (sum, waypoint) => sum + waypoint.questions.length,
+          0
+        );
+        const isPerfectCompletion = correctAnswersCount + (result.isCorrect ? 1 : 0) === totalQuestionCount;
         try {
-          await queueBadgeUnlocksForCompletion();
+          await queueBadgeUnlocksForCompletion({
+            completedAt: new Date(),
+            isPerfectCompletion,
+          });
         } catch {
           // badge unlock processing should never block quiz completion
         }

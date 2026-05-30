@@ -474,12 +474,12 @@ export function CreateQuizPage(): JSX.Element {
   const isMobilePreviewLayout = useMediaQuery("(max-width: 48em)");
   const [step, setStep] = useState<WizardStep>(1);
   const [input, setInput] = useState<QuizDraftInput>({
-    title: "Soccer Team Bi-weekly Quiz",
-    description: "Public two-week quiz walk",
-    isPublic: false,
+    title: "",
+    description: "",
+    isPublic: true,
     accessCode: null,
     locale: "sv",
-    organizerName: "Johan Lindqvist",
+    organizerName: null,
     organizerAvatarUrl: null,
     organizerSwish: null,
     isAnonymous: false,
@@ -1031,6 +1031,13 @@ export function CreateQuizPage(): JSX.Element {
   }, []);
 
   async function onCreate(): Promise<void> {
+    const hasRequiredIdentityData = input.title.trim().length > 2 && input.description.trim().length > 0;
+    if (!hasRequiredIdentityData) {
+      setStep(1);
+      setError(t("creator.publish.errorIdentityRequired"));
+      return;
+    }
+
     setError(null);
     setSavingDraft(true);
     try {
@@ -1356,7 +1363,7 @@ export function CreateQuizPage(): JSX.Element {
     : null;
 
   const canGoNext =
-    (step === 1 && input.title.trim().length > 2) ||
+    (step === 1 && input.title.trim().length > 2 && input.description.trim().length > 0) ||
     step === 2 ||
     (step === 3 && hasWaypointData) ||
     (step === 4 && hasQuestionData) ||
@@ -1605,14 +1612,6 @@ export function CreateQuizPage(): JSX.Element {
               value={input.description}
               onChange={(e) => setInput({ ...input, description: e.currentTarget.value })}
             />
-            <TextInput
-              label={t("creator.identity.labelOrganizerName")}
-              value={input.organizerName ?? ""}
-              onChange={(e) => setInput({
-                ...input,
-                organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
-              })}
-            />
             <Switch
               label={t("creator.identity.labelPublicQuiz")}
               checked={input.isPublic}
@@ -1637,8 +1636,20 @@ export function CreateQuizPage(): JSX.Element {
               onChange={(event) => setInput({
                 ...input,
                 isAnonymous: event.currentTarget.checked,
+                organizerName: event.currentTarget.checked ? null : input.organizerName,
+                organizerAvatarUrl: event.currentTarget.checked ? null : input.organizerAvatarUrl,
               })}
             />
+            {!input.isAnonymous ? (
+              <TextInput
+                label={t("creator.identity.labelOrganizerName")}
+                value={input.organizerName ?? ""}
+                onChange={(e) => setInput({
+                  ...input,
+                  organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+                })}
+              />
+            ) : null}
             {!input.isAnonymous ? (
               <TextInput
                 label={t("creator.identity.labelOrganizerAvatarUrl")}
