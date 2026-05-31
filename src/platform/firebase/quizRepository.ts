@@ -13,12 +13,14 @@ import {
   serverTimestamp,
   setDoc,
   Timestamp,
+  runTransaction,
   updateDoc,
   where,
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 import { getFirebaseServices } from "./firebase";
 import { routeDistanceMeters } from "../map/geolocation";
+import type { Coordinates } from "../map/geolocation";
 import type { BadgeProgressState, BadgeUnlockEvent } from "../../domain/badges";
 import type {
   AnswerResult,
@@ -32,6 +34,7 @@ import type {
   QuizSummary,
   QuizWalk,
   QuestionType,
+  UserTokens,
 } from "../../domain/types";
 
 async function getAnonymousUid(): Promise<string> {
@@ -48,6 +51,16 @@ export async function getCurrentUserUid(): Promise<string> {
 export interface PlayerBadgeProgressSnapshot extends BadgeProgressState {
   firstDiscoverySeen: boolean;
   firstDiscoveryProfileLabelSeen: boolean;
+  aiTokens: number;
+  aiTokensGranted: number;
+  aiTokensPurchased: number;
+  aiTokensUsed: number;
+  aiTokensResetDate: string | null;
+}
+
+export interface AiTokenConsumeResult {
+  aiTokens: number;
+  aiTokensUsed: number;
 }
 
 function buildBadgeUnlockId(event: BadgeUnlockEvent): string {
@@ -59,6 +72,16 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
+function getDefaultAiTokensResetDate(): string {
+  const now = new Date();
+  return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function normalizeTokenNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
 export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnapshot> {
   const { db } = getFirebaseServices();
   const uid = await getAnonymousUid();
@@ -66,15 +89,40 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
 
   const profileData = profileDoc.data() as {
     quizzesCompleted?: number;
+    quizzesCreatedPublished?: number;
+    quizzesPlayedTotal?: number;
+    playStreakDays?: number;
+    perfectQuizzesCompleted?: number;
+    lastCompletedQuizDate?: string | null;
     triggeredEventKeys?: unknown;
     earnedTierByBadgeId?: Record<string, unknown>;
     earnedDiscoveryBadgeIds?: unknown;
     firstDiscoverySeen?: boolean;
     firstDiscoveryProfileLabelSeen?: boolean;
+    aiTokens?: number;
+    aiTokensGranted?: number;
+    aiTokensPurchased?: number;
+    aiTokensUsed?: number;
+    aiTokensResetDate?: string | null;
   } | undefined;
+
+  const aiTokensResetDate =
+    typeof profileData?.aiTokensResetDate === "string" && profileData.aiTokensResetDate.trim().length > 0
+      ? profileData.aiTokensResetDate
+      : getDefaultAiTokensResetDate();
 
   return {
     quizzesCompleted: typeof profileData?.quizzesCompleted === "number" ? profileData.quizzesCompleted : 0,
+    quizzesCreatedPublished:
+      typeof profileData?.quizzesCreatedPublished === "number" ? profileData.quizzesCreatedPublished : 0,
+    quizzesPlayedTotal: typeof profileData?.quizzesPlayedTotal === "number" ? profileData.quizzesPlayedTotal : 0,
+    playStreakDays: typeof profileData?.playStreakDays === "number" ? profileData.playStreakDays : 0,
+    perfectQuizzesCompleted:
+      typeof profileData?.perfectQuizzesCompleted === "number" ? profileData.perfectQuizzesCompleted : 0,
+    lastCompletedQuizDate:
+      typeof profileData?.lastCompletedQuizDate === "string" && profileData.lastCompletedQuizDate.trim().length > 0
+        ? profileData.lastCompletedQuizDate
+        : null,
     triggeredEventKeys: normalizeStringArray(profileData?.triggeredEventKeys),
     earnedTierByBadgeId: Object.fromEntries(
       Object.entries(profileData?.earnedTierByBadgeId ?? {}).flatMap(([badgeId, tier]) => {
@@ -85,6 +133,11 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
     earnedDiscoveryBadgeIds: normalizeStringArray(profileData?.earnedDiscoveryBadgeIds),
     firstDiscoverySeen: profileData?.firstDiscoverySeen ?? false,
     firstDiscoveryProfileLabelSeen: profileData?.firstDiscoveryProfileLabelSeen ?? false,
+    aiTokens: normalizeTokenNumber(profileData?.aiTokens),
+    aiTokensGranted: normalizeTokenNumber(profileData?.aiTokensGranted),
+    aiTokensPurchased: normalizeTokenNumber(profileData?.aiTokensPurchased),
+    aiTokensUsed: normalizeTokenNumber(profileData?.aiTokensUsed),
+    aiTokensResetDate,
   };
 }
 
@@ -95,15 +148,105 @@ export async function savePlayerBadgeProgress(progress: PlayerBadgeProgressSnaps
     doc(db, "playerProfiles", uid),
     {
       quizzesCompleted: progress.quizzesCompleted,
+      quizzesCreatedPublished: progress.quizzesCreatedPublished,
+      quizzesPlayedTotal: progress.quizzesPlayedTotal,
+      playStreakDays: progress.playStreakDays,
+      perfectQuizzesCompleted: progress.perfectQuizzesCompleted,
+      lastCompletedQuizDate: progress.lastCompletedQuizDate,
       triggeredEventKeys: [...new Set(progress.triggeredEventKeys)],
       earnedTierByBadgeId: progress.earnedTierByBadgeId,
       earnedDiscoveryBadgeIds: [...new Set(progress.earnedDiscoveryBadgeIds)],
       firstDiscoverySeen: progress.firstDiscoverySeen,
       firstDiscoveryProfileLabelSeen: progress.firstDiscoveryProfileLabelSeen,
+      aiTokens: normalizeTokenNumber(progress.aiTokens),
+      aiTokensGranted: normalizeTokenNumber(progress.aiTokensGranted),
+      aiTokensPurchased: normalizeTokenNumber(progress.aiTokensPurchased),
+      aiTokensUsed: normalizeTokenNumber(progress.aiTokensUsed),
+      aiTokensResetDate: progress.aiTokensResetDate ?? getDefaultAiTokensResetDate(),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
+}
+
+export async function getCurrentUserTokens(): Promise<UserTokens> {
+  const progress = await getPlayerBadgeProgress();
+  return {
+    aiTokens: progress.aiTokens,
+    aiTokensGranted: progress.aiTokensGranted,
+    aiTokensPurchased: progress.aiTokensPurchased,
+    aiTokensUsed: progress.aiTokensUsed,
+    aiTokensResetDate: progress.aiTokensResetDate,
+  };
+}
+
+export async function seedAiAdminPreviewTokens(seedValue = 9999): Promise<UserTokens> {
+  const progress = await getPlayerBadgeProgress();
+  const nextTokens = Math.max(progress.aiTokens, seedValue);
+  const nextGranted = Math.max(progress.aiTokensGranted, seedValue);
+
+  if (nextTokens !== progress.aiTokens || nextGranted !== progress.aiTokensGranted) {
+    await savePlayerBadgeProgress({
+      ...progress,
+      aiTokens: nextTokens,
+      aiTokensGranted: nextGranted,
+      aiTokensResetDate: progress.aiTokensResetDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+  }
+
+  return {
+    aiTokens: nextTokens,
+    aiTokensGranted: nextGranted,
+    aiTokensPurchased: progress.aiTokensPurchased,
+    aiTokensUsed: progress.aiTokensUsed,
+    aiTokensResetDate: progress.aiTokensResetDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+export async function consumeAiToken(): Promise<AiTokenConsumeResult> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const profileRef = doc(db, "playerProfiles", uid);
+
+  return runTransaction(db, async (transaction) => {
+    const profileSnapshot = await transaction.get(profileRef);
+    const profileData = (profileSnapshot.data() as {
+      aiTokens?: unknown;
+      aiTokensUsed?: unknown;
+      aiTokensResetDate?: unknown;
+    } | undefined) ?? {};
+
+    const currentTokens = normalizeTokenNumber(profileData.aiTokens);
+    const currentUsed = normalizeTokenNumber(profileData.aiTokensUsed);
+    const nextResetDate =
+      typeof profileData.aiTokensResetDate === "string" && profileData.aiTokensResetDate.trim().length > 0
+        ? profileData.aiTokensResetDate
+        : getDefaultAiTokensResetDate();
+
+    if (currentTokens < 1) {
+      const tokenError = new Error("No tokens remaining") as Error & { code?: string };
+      tokenError.code = "no-ai-tokens";
+      throw tokenError;
+    }
+
+    const nextTokens = currentTokens - 1;
+    const nextUsed = currentUsed + 1;
+    transaction.set(
+      profileRef,
+      {
+        aiTokens: nextTokens,
+        aiTokensUsed: nextUsed,
+        aiTokensResetDate: nextResetDate,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return {
+      aiTokens: nextTokens,
+      aiTokensUsed: nextUsed,
+    };
+  });
 }
 
 export async function storePlayerBadgeUnlocks(events: BadgeUnlockEvent[]): Promise<void> {
@@ -214,8 +357,87 @@ export interface EditableQuizDraft {
   status: "draft" | "published";
 }
 
+export interface PublishedQuizDiscoveryItem {
+  id: string;
+  title: string;
+  description: string;
+  status: "published";
+  waypointCount: number;
+  questionCount: number;
+  routeDistanceKm: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  waypointCoordinates: Coordinates[];
+}
+
+export interface PlayerFavoriteQuizItem {
+  quizId: string;
+  favoritedAt: string | null;
+}
+
+export interface PlayerQuizHistoryItem {
+  sessionId: string;
+  quizId: string;
+  status: "active" | "completed";
+  score: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface AccessCodeAvailabilityResult {
+  available: boolean;
+  suggestion?: string;
+}
+
+export interface PlayValueResolution {
+  quizId: string;
+  resolvedBy: "id" | "access_code";
+}
+
+const AUTO_ACCESS_CODE_LENGTH = 20;
+const CUSTOM_CODE_REGEX = /^[A-Za-z0-9-]{4,20}$/;
+const AUTO_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
 function randomKey(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+function randomCode(length: number): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let result = "";
+  for (let i = 0; i < length; i += 1) {
+    result += AUTO_CODE_ALPHABET[bytes[i] % AUTO_CODE_ALPHABET.length];
+  }
+  return result;
+}
+
+export function generateAutoAccessCodePreview(): string {
+  return randomCode(AUTO_ACCESS_CODE_LENGTH);
+}
+
+function suggestCustomCodeVariant(code: string): string {
+  const trimmed = code.trim();
+  if (trimmed.length === 0) return "quiz-2";
+  const normalizedDash = trimmed.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const withoutSuffix = normalizedDash.replace(/-\d+$/, "");
+  const base = (withoutSuffix || normalizedDash || "quiz").slice(0, 18);
+  return `${base}-2`;
+}
+
+export function normalizeAccessCode(code: string): string {
+  return code.trim().toLowerCase();
+}
+
+export function isCustomAccessCodeFormatValid(code: string): boolean {
+  return CUSTOM_CODE_REGEX.test(code.trim());
+}
+
+function isQuizValidAt(quizSummary: Pick<QuizSummary, "closeAt">): boolean {
+  return Date.parse(quizSummary.closeAt) > Date.now();
+}
+
+function isPublicWithLegacyDefault(status: "draft" | "published", isPublic: boolean | null | undefined): boolean {
+  return isPublic ?? status === "published";
 }
 
 function toIsoOrNull(value: unknown): string | null {
@@ -257,6 +479,212 @@ export function buildPlayShareLink(quizId: string): string {
   return `${window.location.origin}/play/${quizId}`;
 }
 
+async function clearQuizAccessCode(quizId: string): Promise<void> {
+  const { db } = getFirebaseServices();
+  await runTransaction(db, async (transaction) => {
+    const quizRef = doc(db, "quizzes", quizId);
+    const quizSnapshot = await transaction.get(quizRef);
+    if (!quizSnapshot.exists()) {
+      throw new Error("Quiz not found");
+    }
+
+    const quizData = quizSnapshot.data() as { accessCodeNormalized?: string | null };
+    const previousNormalized =
+      typeof quizData.accessCodeNormalized === "string" && quizData.accessCodeNormalized.length > 0
+        ? quizData.accessCodeNormalized
+        : null;
+
+    if (previousNormalized) {
+      transaction.delete(doc(db, "quizAccessCodes", previousNormalized));
+    }
+
+    transaction.update(quizRef, {
+      accessCode: null,
+      accessCodeNormalized: null,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+async function claimAccessCodeForQuiz(params: {
+  quizId: string;
+  code: string;
+  isAutoGenerated: boolean;
+}): Promise<{ code: string; normalized: string }> {
+  const { db } = getFirebaseServices();
+  const code = params.code.trim();
+  const normalized = normalizeAccessCode(code);
+
+  await runTransaction(db, async (transaction) => {
+    const quizRef = doc(db, "quizzes", params.quizId);
+    const quizSnapshot = await transaction.get(quizRef);
+    if (!quizSnapshot.exists()) {
+      throw new Error("Quiz not found");
+    }
+
+    const quizData = quizSnapshot.data() as {
+      accessCodeNormalized?: string | null;
+    };
+    const previousNormalized =
+      typeof quizData.accessCodeNormalized === "string" && quizData.accessCodeNormalized.length > 0
+        ? quizData.accessCodeNormalized
+        : null;
+
+    const registryRef = doc(db, "quizAccessCodes", normalized);
+    const registrySnapshot = await transaction.get(registryRef);
+    if (registrySnapshot.exists()) {
+      const takenByQuizId = String((registrySnapshot.data() as { quizId?: string }).quizId ?? "");
+      if (takenByQuizId !== params.quizId) {
+        const takenError = new Error("Access code already in use") as Error & { code?: string };
+        takenError.code = "access-code-taken";
+        throw takenError;
+      }
+    }
+
+    if (previousNormalized && previousNormalized !== normalized) {
+      transaction.delete(doc(db, "quizAccessCodes", previousNormalized));
+    }
+
+    transaction.set(registryRef, {
+      quizId: params.quizId,
+      code,
+      codeNormalized: normalized,
+      isAutoGenerated: params.isAutoGenerated,
+      updatedAt: serverTimestamp(),
+    });
+
+    transaction.update(quizRef, {
+      accessCode: code,
+      accessCodeNormalized: normalized,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  return { code, normalized };
+}
+
+async function generateAndClaimAutoAccessCode(quizId: string): Promise<{ code: string; normalized: string }> {
+  let lastError: unknown = null;
+  for (let i = 0; i < 20; i += 1) {
+    const generated = randomCode(AUTO_ACCESS_CODE_LENGTH);
+    try {
+      return await claimAccessCodeForQuiz({
+        quizId,
+        code: generated,
+        isAutoGenerated: true,
+      });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== "access-code-taken") {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw (lastError instanceof Error ? lastError : new Error("Failed to generate a unique access code"));
+}
+
+export async function checkAccessCodeAvailability(code: string, currentQuizId?: string): Promise<AccessCodeAvailabilityResult> {
+  const { db } = getFirebaseServices();
+  const trimmed = code.trim();
+  if (!isCustomAccessCodeFormatValid(trimmed)) {
+    return { available: false };
+  }
+
+  const normalized = normalizeAccessCode(trimmed);
+  const snapshot = await getDoc(doc(db, "quizAccessCodes", normalized));
+  if (!snapshot.exists()) {
+    return { available: true };
+  }
+
+  const takenQuizId = String((snapshot.data() as { quizId?: string }).quizId ?? "").trim();
+  if (currentQuizId && takenQuizId === currentQuizId) {
+    return { available: true };
+  }
+
+  return {
+    available: false,
+    suggestion: suggestCustomCodeVariant(trimmed),
+  };
+}
+
+export async function setQuizCustomAccessCode(quizId: string, code: string): Promise<string> {
+  await assertQuizOwnership(quizId);
+  const trimmed = code.trim();
+  if (!isCustomAccessCodeFormatValid(trimmed)) {
+    throw new Error("Access code must be 4-20 characters using letters, numbers, or hyphens");
+  }
+
+  const claimed = await claimAccessCodeForQuiz({
+    quizId,
+    code: trimmed,
+    isAutoGenerated: false,
+  });
+  return claimed.code;
+}
+
+export async function regenerateQuizAccessCode(quizId: string): Promise<string> {
+  const { db } = getFirebaseServices();
+  await assertQuizOwnership(quizId);
+  const summary = await getQuizSummary(quizId);
+  if (!summary) {
+    throw new Error("Quiz not found");
+  }
+  if (!isQuizValidAt(summary)) {
+    throw new Error("Quiz has expired");
+  }
+
+  const claimed = await generateAndClaimAutoAccessCode(quizId);
+  await updateDoc(doc(db, "quizzes", quizId), {
+    isPublic: false,
+    accessCode: claimed.code,
+    accessCodeNormalized: claimed.normalized,
+    updatedAt: serverTimestamp(),
+  });
+  return claimed.code;
+}
+
+export async function resolvePlayableQuizId(value: string): Promise<PlayValueResolution | null> {
+  const { db } = getFirebaseServices();
+  const candidate = value.trim();
+  if (candidate.length === 0) {
+    return null;
+  }
+
+  const directQuiz = await getDoc(doc(db, "quizzes", candidate));
+  if (directQuiz.exists()) {
+    return { quizId: candidate, resolvedBy: "id" };
+  }
+
+  const normalized = normalizeAccessCode(candidate);
+  const codeSnapshot = await getDoc(doc(db, "quizAccessCodes", normalized));
+  if (!codeSnapshot.exists()) {
+    return null;
+  }
+
+  const resolvedQuizId = String((codeSnapshot.data() as { quizId?: string }).quizId ?? "").trim();
+  if (!resolvedQuizId) {
+    return null;
+  }
+
+  const summary = await getQuizSummary(resolvedQuizId);
+  if (!summary) {
+    return null;
+  }
+  if (summary.status !== "published") {
+    return null;
+  }
+  if (!isQuizValidAt(summary)) {
+    return null;
+  }
+  if (normalizeAccessCode(summary.accessCode ?? "") !== normalized) {
+    return null;
+  }
+
+  return { quizId: resolvedQuizId, resolvedBy: "access_code" };
+}
+
 async function assertQuizOwnership(quizId: string): Promise<void> {
   const { db } = getFirebaseServices();
   const uid = await getAnonymousUid();
@@ -280,6 +708,8 @@ function fromQuestionDoc(questionData: {
   numericAnswer?: number | null;
   numericTolerance?: number | null;
   letterOrderAnswer?: string | null;
+  funFact?: string | null;
+  sourceUrl?: string | null;
   timerSeconds?: number | null;
 }): QuizDraftInput["waypoints"][number]["questions"][number] {
   const normalizedChoices = (questionData.choices ?? []).map((choice) => choice.text ?? "");
@@ -301,6 +731,8 @@ function fromQuestionDoc(questionData: {
     correctChoiceIndexes,
     numericAnswer: questionData.numericAnswer ?? null,
     letterOrderAnswer: questionData.letterOrderAnswer ?? null,
+    funFact: questionData.funFact ?? undefined,
+    sourceUrl: questionData.sourceUrl ?? undefined,
     config: {
       timerSeconds: questionData.timerSeconds ?? null,
       numericTolerance: questionData.numericTolerance ?? null,
@@ -354,6 +786,8 @@ async function persistQuizWaypoints(quizId: string, waypoints: QuizDraftInput["w
         numericAnswer: question.numericAnswer,
         numericTolerance: question.config.numericTolerance,
         letterOrderAnswer: question.letterOrderAnswer,
+        funFact: question.funFact ?? null,
+        sourceUrl: question.sourceUrl ?? null,
         timerSeconds: question.config.timerSeconds,
         pointsIfCorrect: 1,
         createdAt: serverTimestamp(),
@@ -376,9 +810,13 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
   const creatorUid = await getAnonymousUid();
   const editKey = randomKey();
   const editKeyHash = await sha256Hex(editKey);
+  const wantsPublic = input.isPublic;
   const quizRef = await addDoc(collection(db, "quizzes"), {
     title: input.title,
     description: input.description,
+    isPublic: wantsPublic,
+    accessCode: null,
+    accessCodeNormalized: null,
     organizerName: input.organizerName,
     organizerAvatarUrl: input.organizerAvatarUrl,
     organizerSwish: input.organizerSwish,
@@ -415,6 +853,19 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     updatedAt: serverTimestamp(),
   });
 
+  if (!wantsPublic) {
+    const preferredCode = input.accessCode?.trim() ?? "";
+    if (preferredCode.length > 0 && isCustomAccessCodeFormatValid(preferredCode)) {
+      await claimAccessCodeForQuiz({
+        quizId: quizRef.id,
+        code: preferredCode,
+        isAutoGenerated: false,
+      });
+    } else {
+      await generateAndClaimAutoAccessCode(quizRef.id);
+    }
+  }
+
   await persistQuizWaypoints(quizRef.id, input.waypoints, false);
 
   return { quizId: quizRef.id, editKey };
@@ -433,6 +884,8 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
   const quizData = quizDoc.data() as {
     title?: string;
     description?: string;
+    isPublic?: boolean;
+    accessCode?: string | null;
     organizerName?: string | null;
     organizerAvatarUrl?: string | null;
     organizerSwish?: string | null;
@@ -481,6 +934,8 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
           numericAnswer?: number | null;
           numericTolerance?: number | null;
           letterOrderAnswer?: string | null;
+          funFact?: string | null;
+          sourceUrl?: string | null;
           timerSeconds?: number | null;
         })),
       };
@@ -493,6 +948,8 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
     input: {
       title: quizData.title ?? "",
       description: quizData.description ?? "",
+      isPublic: quizData.isPublic ?? false,
+      accessCode: quizData.accessCode ?? null,
       locale: quizData.defaultLocale ?? "en",
       organizerName: quizData.organizerName ?? null,
       organizerAvatarUrl: quizData.organizerAvatarUrl ?? null,
@@ -534,6 +991,7 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
   await updateDoc(doc(db, "quizzes", quizId), {
     title: input.title,
     description: input.description,
+    isPublic: input.isPublic,
     organizerName: input.organizerName,
     organizerAvatarUrl: input.organizerAvatarUrl,
     organizerSwish: input.organizerSwish,
@@ -542,6 +1000,23 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     waypointCount: input.waypoints.length,
     updatedAt: serverTimestamp(),
   });
+
+  if (input.isPublic) {
+    await clearQuizAccessCode(quizId);
+  } else {
+    const existingSummary = await getQuizSummary(quizId);
+    const preferredCode = input.accessCode?.trim() ?? "";
+
+    if (preferredCode.length > 0 && isCustomAccessCodeFormatValid(preferredCode)) {
+      await claimAccessCodeForQuiz({
+        quizId,
+        code: preferredCode,
+        isAutoGenerated: false,
+      });
+    } else if (!existingSummary?.accessCode) {
+      await generateAndClaimAutoAccessCode(quizId);
+    }
+  }
 
   await setDoc(doc(db, "quizRules", quizId), {
     rulesetVersion: 1,
@@ -576,12 +1051,25 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
       title?: string;
       description?: string;
       status?: "draft" | "published";
+      isPublic?: boolean;
+      accessCode?: string | null;
       waypointCount?: number;
       createdAt?: unknown;
       updatedAt?: unknown;
     };
 
-    let routeDistanceKm = 0;
+    let validUntil: string | null = null;
+    try {
+      const rulesDoc = await getDoc(doc(db, "quizRules", quizDoc.id));
+      if (rulesDoc.exists()) {
+        const rulesData = rulesDoc.data() as { closeAt?: string };
+        validUntil = rulesData.closeAt ?? null;
+      }
+    } catch {
+      validUntil = null;
+    }
+
+    let routeDistanceKm: number;
     try {
       const waypointSnapshot = await getDocs(
         query(collection(db, `quizzes/${quizDoc.id}/waypoints`), orderBy("order", "asc"))
@@ -603,6 +1091,9 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
       title: data.title ?? "Untitled quiz",
       description: data.description ?? "",
       status: data.status ?? "draft",
+      isPublic: isPublicWithLegacyDefault(data.status ?? "draft", data.isPublic),
+      accessCode: data.accessCode ?? null,
+      validUntil,
       waypointCount: data.waypointCount ?? 0,
       routeDistanceKm,
       createdAt: toIsoOrNull(data.createdAt),
@@ -615,6 +1106,206 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
     const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
     return bTime - aTime;
   });
+}
+
+export async function getCreatorTotalCompletedPlays(): Promise<number> {
+  const { db } = getFirebaseServices();
+  const creatorUid = await getAnonymousUid();
+  const quizzesSnapshot = await getDocs(query(collection(db, "quizzes"), where("creatorUid", "==", creatorUid)));
+  if (quizzesSnapshot.empty) return 0;
+
+  const sessionSnapshots = await Promise.all(
+    quizzesSnapshot.docs.map((quizDoc) =>
+      getDocs(
+        query(
+          collection(db, "participantSessions"),
+          where("quizId", "==", quizDoc.id),
+          where("status", "==", "completed")
+        )
+      ).catch(() => null)
+    )
+  );
+
+  return sessionSnapshots.reduce((sum, snapshot) => {
+    if (!snapshot) return sum;
+    const otherPlayersCount = snapshot.docs.filter((sessionDoc) => {
+      const data = sessionDoc.data() as { anonymousUid?: string };
+      return typeof data.anonymousUid === "string" && data.anonymousUid !== creatorUid;
+    }).length;
+    return sum + otherPlayersCount;
+  }, 0);
+}
+
+async function loadQuizDiscoveryItem(quizDoc: { id: string; data: () => unknown }): Promise<PublishedQuizDiscoveryItem> {
+  const { db } = getFirebaseServices();
+  const data = quizDoc.data() as {
+    title?: string;
+    description?: string;
+    status?: "draft" | "published";
+    isPublic?: boolean;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+  };
+
+  if (!isPublicWithLegacyDefault(data.status ?? "draft", data.isPublic)) {
+    throw new Error("Quiz is private");
+  }
+
+  const rulesDoc = await getDoc(doc(db, "quizRules", quizDoc.id));
+  if (!rulesDoc.exists()) {
+    throw new Error("Quiz rules missing");
+  }
+  const rulesData = rulesDoc.data() as { closeAt?: string };
+  const validUntil = rulesData.closeAt ?? null;
+  if (!validUntil || Date.parse(validUntil) <= Date.now()) {
+    throw new Error("Quiz expired");
+  }
+
+  const waypointSnapshot = await getDocs(
+    query(collection(db, `quizzes/${quizDoc.id}/waypoints`), orderBy("order", "asc"))
+  );
+
+  const waypointCoordinates: Coordinates[] = [];
+  let questionCount = 0;
+  for (const waypointDoc of waypointSnapshot.docs) {
+    const waypointData = waypointDoc.data() as { lat?: number; lng?: number };
+    if (typeof waypointData.lat === "number" && typeof waypointData.lng === "number") {
+      waypointCoordinates.push({ lat: waypointData.lat, lng: waypointData.lng });
+    }
+
+    const questionSnapshot = await getDocs(collection(db, `quizzes/${quizDoc.id}/waypoints/${waypointDoc.id}/questions`));
+    questionCount += questionSnapshot.size;
+  }
+
+  return {
+    id: quizDoc.id,
+    title: data.title ?? "Untitled quiz",
+    description: data.description ?? "",
+    status: "published",
+    waypointCount: waypointSnapshot.size,
+    questionCount,
+    routeDistanceKm: routeDistanceMeters(waypointCoordinates) / 1000,
+    createdAt: toIsoOrNull(data.createdAt),
+    updatedAt: toIsoOrNull(data.updatedAt),
+    waypointCoordinates,
+  };
+}
+
+export async function getPublishedQuizDiscoveryItems(): Promise<PublishedQuizDiscoveryItem[]> {
+  const { db } = getFirebaseServices();
+  const quizzesQuery = query(collection(db, "quizzes"), where("status", "==", "published"));
+  const snapshot = await getDocs(quizzesQuery);
+
+  const quizzes = (
+    await Promise.all(
+      snapshot.docs.map(async (quizDoc) => {
+        try {
+          return await loadQuizDiscoveryItem(quizDoc);
+        } catch {
+          return null;
+        }
+      })
+    )
+  ).filter((quiz): quiz is PublishedQuizDiscoveryItem => quiz !== null);
+  return quizzes.sort((a, b) => {
+    const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return bTime - aTime;
+  });
+}
+
+export async function getPlayerFavoriteQuizzes(): Promise<PlayerFavoriteQuizItem[]> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const snapshot = await getDocs(
+    query(collection(db, `playerProfiles/${uid}/favoriteQuizzes`), orderBy("favoritedAt", "desc"))
+  );
+
+  return snapshot.docs.map((favoriteDoc) => {
+    const data = favoriteDoc.data() as {
+      quizId?: string;
+      favoritedAt?: unknown;
+    };
+
+    return {
+      quizId: data.quizId ?? favoriteDoc.id,
+      favoritedAt: toIsoOrNull(data.favoritedAt),
+    };
+  });
+}
+
+export async function setPlayerQuizFavorite(quizId: string, favorited: boolean): Promise<void> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const favoriteRef = doc(db, "playerProfiles", uid, "favoriteQuizzes", quizId);
+
+  if (!favorited) {
+    await deleteDoc(favoriteRef);
+    return;
+  }
+
+  await setDoc(
+    favoriteRef,
+    {
+      quizId,
+      favoritedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function getPlayerQuizHistory(): Promise<PlayerQuizHistoryItem[]> {
+  const { db } = getFirebaseServices();
+  const uid = await getAnonymousUid();
+  const snapshot = await getDocs(query(collection(db, "participantSessions"), where("anonymousUid", "==", uid)));
+
+  const latestByQuiz = new Map<string, PlayerQuizHistoryItem & { sortTime: number }>();
+
+  snapshot.docs.forEach((sessionDoc) => {
+    const data = sessionDoc.data() as {
+      quizId?: string;
+      status?: "active" | "completed";
+      score?: number;
+      startedAt?: unknown;
+      completedAt?: unknown;
+    };
+
+    const quizId = data.quizId;
+    if (typeof quizId !== "string" || quizId.trim().length === 0) {
+      return;
+    }
+
+    const startedAt = toIsoOrNull(data.startedAt);
+    const completedAt = toIsoOrNull(data.completedAt);
+    const sortTime = Math.max(startedAt ? Date.parse(startedAt) : 0, completedAt ? Date.parse(completedAt) : 0);
+
+    const nextEntry: PlayerQuizHistoryItem & { sortTime: number } = {
+      sessionId: sessionDoc.id,
+      quizId,
+      status: data.status === "completed" ? "completed" : "active",
+      score: typeof data.score === "number" ? data.score : 0,
+      startedAt,
+      completedAt,
+      sortTime,
+    };
+
+    const current = latestByQuiz.get(quizId);
+    if (!current || nextEntry.sortTime >= current.sortTime) {
+      latestByQuiz.set(quizId, nextEntry);
+    }
+  });
+
+  return [...latestByQuiz.values()]
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .map((entry) => ({
+      sessionId: entry.sessionId,
+      quizId: entry.quizId,
+      status: entry.status,
+      score: entry.score,
+      startedAt: entry.startedAt,
+      completedAt: entry.completedAt,
+    }));
 }
 
 export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promise<LeaderboardEntry[]> {
@@ -645,9 +1336,11 @@ export async function getQuizLeaderboard(quizId: string, maxEntries = 25): Promi
   });
 }
 
-export async function publishQuiz(quizId: string, editKey: string): Promise<void> {
+export async function publishQuiz(quizId: string, _editKey: string): Promise<void> {
+  void _editKey;
   const { db } = getFirebaseServices();
   await assertQuizOwnership(quizId);
+  const uid = await getAnonymousUid();
 
   const quizDoc = await getDoc(doc(db, "quizzes", quizId));
   if (!quizDoc.exists()) {
@@ -664,8 +1357,24 @@ export async function publishQuiz(quizId: string, editKey: string): Promise<void
   // projects cannot deploy the callable function path that used to handle publish.
   await updateDoc(doc(db, "quizzes", quizId), {
     status: "published",
+    isPublic: (data as { isPublic?: boolean }).isPublic ?? false,
     publishedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  });
+
+  const publishedCountSnapshot = await getCountFromServer(
+    query(
+      collection(db, "quizzes"),
+      where("creatorUid", "==", uid),
+      where("status", "==", "published")
+    )
+  );
+  const publishedCount = publishedCountSnapshot.data().count;
+  const progress = await getPlayerBadgeProgress();
+  await savePlayerBadgeProgress({
+    ...progress,
+    quizzesCreatedPublished: Math.max(progress.quizzesCreatedPublished, publishedCount),
+    quizzesPlayedTotal: progress.quizzesPlayedTotal,
   });
 }
 
@@ -681,6 +1390,8 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     title: string;
     description: string;
     status: "draft" | "published";
+    isPublic?: boolean;
+    accessCode?: string | null;
     creatorUid?: string;
     organizerName?: string | null;
     organizerAvatarUrl?: string | null;
@@ -705,6 +1416,9 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     title: q.title,
     description: q.description,
     status: q.status,
+    isPublic: isPublicWithLegacyDefault(q.status, q.isPublic),
+    accessCode: q.accessCode ?? null,
+    validUntil: r.closeAt,
     creatorUid: q.creatorUid,
     organizerName: q.organizerName ?? null,
     organizerAvatarUrl: q.organizerAvatarUrl ?? null,
@@ -754,6 +1468,8 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             order: number;
             questionType?: QuestionType;
             text: string;
+            funFact?: string | null;
+            sourceUrl?: string | null;
             choices: Array<{ id: string; text: string }>;
             pointsIfCorrect: number;
             timerSeconds?: number | null;
@@ -763,6 +1479,8 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             order: questionData.order,
             questionType: questionData.questionType ?? "multiple_choice",
             text: questionData.text,
+            funFact: questionData.funFact ?? undefined,
+            sourceUrl: questionData.sourceUrl ?? undefined,
             choices: questionData.choices ?? [],
             pointsIfCorrect: questionData.pointsIfCorrect,
             config: {
@@ -900,7 +1618,7 @@ export async function submitFirstAnswer(params: {
   };
 
   const questionType = questionData.questionType ?? "multiple_choice";
-  let isCorrect = false;
+  let isCorrect: boolean;
 
   if (questionType === "numeric") {
     const expected = questionData.numericAnswer;

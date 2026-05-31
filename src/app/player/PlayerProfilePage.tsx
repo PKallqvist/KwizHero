@@ -3,10 +3,10 @@ import { useTranslation } from "react-i18next";
 import { Alert, Badge, Group, Loader, Stack, Text, Title } from "@mantine/core";
 import { IconAlertCircle, IconDots, IconFlame, IconPencil, IconStar, IconTrophy } from "@tabler/icons-react";
 import {
+  getCreatorTotalCompletedPlays,
   getCurrentUserUid,
   getPlayerBadgeProgress,
   getPlayerEarnedBadges,
-  getUserQuizzes,
   markFirstDiscoveryProfileLabelSeen,
 } from "../../platform/firebase/quizRepository";
 import {
@@ -69,6 +69,31 @@ function getCurrentTierForProgress(definition: TieredBadgeConfig, progressValue:
   return currentTier;
 }
 
+function getProgressValueForDefinition(
+  definition: TieredBadgeConfig,
+  progress: {
+    quizzesCompleted: number;
+    quizzesCreatedPublished: number;
+    quizzesPlayedTotal: number;
+    playStreakDays: number;
+    perfectQuizzesCompleted: number;
+  }
+): number {
+  switch (definition.progressionMetric) {
+    case "quizzes_created_published":
+      return progress.quizzesCreatedPublished;
+    case "quizzes_played_total":
+      return progress.quizzesPlayedTotal;
+    case "play_streak_days":
+      return progress.playStreakDays;
+    case "perfect_quizzes_completed":
+      return progress.perfectQuizzesCompleted;
+    case "quizzes_completed":
+    default:
+      return progress.quizzesCompleted;
+  }
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -92,6 +117,9 @@ export function PlayerProfilePage(): JSX.Element {
   const [showFirstDiscoveryLabel, setShowFirstDiscoveryLabel] = useState(false);
   const [quizzesCompleted, setQuizzesCompleted] = useState(0);
   const [quizzesCreated, setQuizzesCreated] = useState(0);
+  const [quizzesPlayedTotal, setQuizzesPlayedTotal] = useState(0);
+  const [playStreakDays, setPlayStreakDays] = useState(0);
+  const [perfectQuizzesCompleted, setPerfectQuizzesCompleted] = useState(0);
   const [profileName, setProfileName] = useState("");
   const [expandedCabinetBadgeId, setExpandedCabinetBadgeId] = useState<string | null>(null);
 
@@ -104,10 +132,10 @@ export function PlayerProfilePage(): JSX.Element {
       setLoading(true);
       setError(null);
       try {
-        const [progress, earnedBadges, userQuizzes, uid] = await Promise.all([
+        const [progress, earnedBadges, creatorTotalPlays, uid] = await Promise.all([
           getPlayerBadgeProgress(),
           getPlayerEarnedBadges(),
-          getUserQuizzes().catch(() => []),
+          getCreatorTotalCompletedPlays().catch(() => 0),
           getCurrentUserUid().catch(() => null),
         ]);
         if (!mounted) return;
@@ -121,7 +149,10 @@ export function PlayerProfilePage(): JSX.Element {
         setBadges(earnedBadges);
         setShowFirstDiscoveryLabel(firstDiscoveryLabelVisible);
         setQuizzesCompleted(progress.quizzesCompleted);
-        setQuizzesCreated(userQuizzes.length);
+        setQuizzesCreated(progress.quizzesCreatedPublished);
+        setQuizzesPlayedTotal(creatorTotalPlays);
+        setPlayStreakDays(progress.playStreakDays);
+        setPerfectQuizzesCompleted(progress.perfectQuizzesCompleted);
         setProfileName(uid ? `${uid.slice(0, 2).toUpperCase()} ${uid.slice(2, 5).toUpperCase()}` : t("player.profileNameFallback"));
 
         if (firstDiscoveryLabelVisible) {
@@ -131,8 +162,9 @@ export function PlayerProfilePage(): JSX.Element {
         if (!mounted) return;
         setError((nextError as Error).message ?? "Failed to load profile");
       } finally {
-        if (!mounted) return;
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 
@@ -145,9 +177,8 @@ export function PlayerProfilePage(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [t]);
 
-  const tieredBadges = useMemo(() => badges.filter((badge) => badge.type === "tiered"), [badges]);
   const discoveryBadges = useMemo(() => badges.filter((badge) => badge.type === "discovery"), [badges]);
   const tieredDefinitions = useMemo(
     () => BADGE_CATALOG.filter((badge) => badge.type === "tiered") as TieredBadgeConfig[],
@@ -156,13 +187,20 @@ export function PlayerProfilePage(): JSX.Element {
 
   const tierCabinetEntries = useMemo<TierCabinetEntry[]>(() => {
     return tieredDefinitions.map((definition) => {
-      const currentTier = getCurrentTierForProgress(definition, quizzesCompleted);
+      const progressValue = getProgressValueForDefinition(definition, {
+        quizzesCompleted,
+        quizzesCreatedPublished: quizzesCreated,
+        quizzesPlayedTotal,
+        playStreakDays,
+        perfectQuizzesCompleted,
+      });
+      const currentTier = getCurrentTierForProgress(definition, progressValue);
       const currentTierConfig = definition.tiers.find((tier) => tier.tier === currentTier) ?? null;
       const nextTierConfig = definition.tiers.find((tier) => tier.tier === currentTier + 1) ?? null;
       const previousUnlock = currentTierConfig?.unlockValue ?? 0;
       const nextUnlock = nextTierConfig?.unlockValue ?? previousUnlock;
       const progressToNext = nextUnlock > previousUnlock
-        ? clamp((quizzesCompleted - previousUnlock) / (nextUnlock - previousUnlock), 0, 1)
+        ? clamp((progressValue - previousUnlock) / (nextUnlock - previousUnlock), 0, 1)
         : 1;
 
       return {
@@ -175,7 +213,7 @@ export function PlayerProfilePage(): JSX.Element {
         displayImageKey: currentTierConfig?.imageKey ?? definition.tiers[0]?.imageKey ?? definition.imageKey,
       };
     });
-  }, [quizzesCompleted, tieredDefinitions]);
+  }, [perfectQuizzesCompleted, playStreakDays, quizzesCompleted, quizzesCreated, quizzesPlayedTotal, tieredDefinitions]);
 
   const expandedCabinetEntry = useMemo(
     () => tierCabinetEntries.find((entry) => entry.definition.id === expandedCabinetBadgeId) ?? null,
@@ -205,10 +243,10 @@ export function PlayerProfilePage(): JSX.Element {
         : []),
       {
         label: t("player.profileStatStreak"),
-        value: `${profile.streakDays} ${t("player.profileStatStreakDays")}`,
+        value: `${playStreakDays} ${t("player.profileStatStreakDays")}`,
       },
     ],
-    [discoveryBadges.length, profile.streakDays, quizzesCompleted, quizzesCreated, t]
+    [discoveryBadges.length, playStreakDays, quizzesCompleted, quizzesCreated, t]
   );
 
   return (

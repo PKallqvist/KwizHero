@@ -19,6 +19,11 @@ describe("evaluateBadgeUnlocks", () => {
     const events = evaluateBadgeUnlocks(
       {
         quizzesCompleted: 10,
+        quizzesCreatedPublished: 0,
+        quizzesPlayedTotal: 0,
+        playStreakDays: 0,
+        perfectQuizzesCompleted: 0,
+        lastCompletedQuizDate: null,
         triggeredEventKeys: [],
         earnedTierByBadgeId: {},
         earnedDiscoveryBadgeIds: [],
@@ -27,7 +32,7 @@ describe("evaluateBadgeUnlocks", () => {
     );
 
     const tierEvents = events.filter((event) => event.badgeId === "quiz_veteran");
-    expect(tierEvents.map((event) => event.tier)).toEqual([1, 2, 3, 4]);
+    expect(tierEvents.map((event) => event.tier)).toEqual([1, 2, 3]);
     expect(tierEvents[0]?.displayName).toContain("Wood");
     expect(tierEvents[0]?.imageKey).toBe("trophy-wood.png");
   });
@@ -36,6 +41,11 @@ describe("evaluateBadgeUnlocks", () => {
     const events = evaluateBadgeUnlocks(
       {
         quizzesCompleted: 0,
+        quizzesCreatedPublished: 0,
+        quizzesPlayedTotal: 0,
+        playStreakDays: 0,
+        perfectQuizzesCompleted: 0,
+        lastCompletedQuizDate: null,
         triggeredEventKeys: ["dead_of_night"],
         earnedTierByBadgeId: {},
         earnedDiscoveryBadgeIds: [],

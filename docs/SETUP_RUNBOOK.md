@@ -14,20 +14,31 @@
 5. Configure unit and e2e test runners.
 
 ## 3. Environment Variables
-Create local env file with:
-- Firebase project id
-- Firebase api key
-- Firebase auth domain
-- Firestore database id
-- Map tile endpoint config
+Use separate env files for frontend and Functions.
 
-Never commit secrets.
+Frontend env file (project root `.env`):
+- VITE_FIREBASE_API_KEY
+- VITE_FIREBASE_AUTH_DOMAIN
+- VITE_FIREBASE_PROJECT_ID
+- VITE_FIREBASE_APP_ID
+- VITE_AI_GEN_PASSWORD (temporary admin preview gate)
+
+Functions env file (`functions/.env`):
+- OPENAI_API_KEY (used by `generateAiQuestionCallable`)
+
+Important:
+- For the current AI feature, only `OPENAI_API_KEY` is required in `functions/.env`.
+- Do not place `OPENAI_API_KEY` in root `.env`.
+- Root `.env` values are build-time frontend vars and cannot secure server secrets.
+- Never commit secrets.
 
 ## 4. Firebase Setup Steps
 1. Create Firestore database in test mode (dev only).
 2. Add initial security rules and indexes.
 3. Enable Cloud Functions.
 4. Configure local emulator for Firestore and Functions.
+5. Set Functions runtime env for production deploys so `OPENAI_API_KEY` is available in Cloud Functions.
+6. Seed admin preview token balance manually in `playerProfiles/{uid}` (example: `aiTokens: 9999`).
 
 ## 5. Local Development Workflow
 1. Start Firebase emulators.

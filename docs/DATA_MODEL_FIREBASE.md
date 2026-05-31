@@ -110,6 +110,41 @@ Fields:
 
 Security note: Answer creates are gated on the writer owning the parent session (`request.auth.uid == get(participantSessions/{sessionId}).data.anonymousUid`).
 
+## 2.8 playerProfiles
+Document id: uid (Firebase Anonymous Auth UID for now)
+
+Fields used by profile + AI token preview:
+- quizzesCompleted: number
+- quizzesCreatedPublished: number
+- quizzesPlayedTotal: number
+- playStreakDays: number
+- perfectQuizzesCompleted: number
+- lastCompletedQuizDate: string | null
+- triggeredEventKeys: string[]
+- earnedTierByBadgeId: map<string, number>
+- earnedDiscoveryBadgeIds: string[]
+- firstDiscoverySeen: boolean
+- firstDiscoveryProfileLabelSeen: boolean
+- aiTokens: number
+- aiTokensGranted: number
+- aiTokensPurchased: number
+- aiTokensUsed: number
+- aiTokensResetDate: string (ISO timestamp, defaults to account creation + 30 days)
+- updatedAt: timestamp
+
+Notes:
+- AI token fields are initialized with safe defaults when absent.
+- Manual admin seeding is supported by editing `playerProfiles/{uid}` in Firebase Console.
+
+## 2.9 waypointQuestions (AI addition)
+Path: quizzes/{quizId}/waypoints/{waypointId}/questions/{questionId}
+
+Additional field stored for future UX:
+- funFact: string | null
+
+Note:
+- `funFact` is stored now but not yet rendered in player UI.
+
 ## 3. Suggested Indexes
 - quizzes(status ASC, updatedAt DESC)
 - quizzes(status ASC, publishedAt DESC)
@@ -133,3 +168,4 @@ Security note: Answer creates are gated on the writer owning the parent session 
 - Add payment ledger collections (post-MVP).
 - Add lockedAt once paid-entry locking is implemented.
 - Add explanation field reveal to player UI (already stored in questions).
+- Move AI token charge flow to backend-only when paid/login rollout starts.

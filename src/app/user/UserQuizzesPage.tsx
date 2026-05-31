@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
   Button,
   Group,
+  Image,
   Loader,
   Modal,
   Stack,
@@ -15,11 +16,13 @@ import {
   Text,
 } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
-import { IconAlertCircle, IconCheck, IconCopy, IconTrophy } from "@tabler/icons-react";
+import { IconAlertCircle, IconCheck, IconCopy, IconQrcode, IconTrophy } from "@tabler/icons-react";
 import {
   buildPlayShareLink,
   getQuizLeaderboard,
+  regenerateQuizAccessCode,
   getUserQuizzes,
+  publishQuiz,
 } from "../../platform/firebase/quizRepository";
 import type { LeaderboardEntry, QuizListItem } from "../../domain/types";
 
@@ -34,6 +37,10 @@ export function UserQuizzesPage(): JSX.Element {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [qrQuiz, setQrQuiz] = useState<{ id: string; title: string; shareLink: string } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>("");
+  const [publishingQuizId, setPublishingQuizId] = useState<string | null>(null);
+  const [regeneratingQuizId, setRegeneratingQuizId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -49,8 +56,9 @@ export function UserQuizzesPage(): JSX.Element {
         if (!mounted) return;
         setQuizzesError((error as Error).message ?? "Failed to load quizzes");
       } finally {
-        if (!mounted) return;
-        setLoadingQuizzes(false);
+        if (mounted) {
+          setLoadingQuizzes(false);
+        }
       }
     }
 
@@ -89,8 +97,9 @@ export function UserQuizzesPage(): JSX.Element {
         if (!mounted) return;
         setLeaderboardError((error as Error).message ?? "Failed to load leaderboard");
       } finally {
-        if (!mounted) return;
-        setLoadingLeaderboard(false);
+        if (mounted) {
+          setLoadingLeaderboard(false);
+        }
       }
     }
 
@@ -105,11 +114,38 @@ export function UserQuizzesPage(): JSX.Element {
     };
   }, [leaderboardQuiz?.id]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function buildQrCode(): Promise<void> {
+      if (!qrQuiz) {
+        setQrDataUrl("");
+        return;
+      }
+
+      const dataUrl = await QRCode.toDataURL(qrQuiz.shareLink, { width: 280, margin: 1 });
+      if (!mounted) return;
+      setQrDataUrl(dataUrl);
+    }
+
+    buildQrCode().catch(() => {
+      if (!mounted) return;
+      setQrDataUrl("");
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [qrQuiz]);
+
   const rows = useMemo(() => {
     return quizzes.map((quiz) => {
-      const shareLink = buildPlayShareLink(quiz.id);
+      const playValue = !quiz.isPublic && quiz.status === "published" && quiz.accessCode ? quiz.accessCode : quiz.id;
+      const shareLink = buildPlayShareLink(playValue);
       const copied = clipboard.copied && lastCopiedQuizId === quiz.id;
       const canEdit = quiz.status === "draft";
+      const isPublished = quiz.status === "published";
+      const isPrivate = !quiz.isPublic;
 
       return (
         <div key={quiz.id} className="kwiz-myquiz-item">
@@ -124,6 +160,18 @@ export function UserQuizzesPage(): JSX.Element {
               </Badge>
             </Group>
 
+            <Group gap="xs" wrap="wrap">
+              <Badge color={isPrivate ? "grape" : "blue"} variant="light">
+                {isPrivate ? t("userQuizzes.typePrivate") : t("userQuizzes.typePublic")}
+              </Badge>
+              <Text size="sm" c="dimmed">
+                {t("userQuizzes.accessCodeLabel")}: {isPrivate ? quiz.accessCode ?? "-" : "-"}
+              </Text>
+              <Text size="sm" c="dimmed">
+                {t("userQuizzes.validUntilLabel")}: {quiz.validUntil ? new Date(quiz.validUntil).toLocaleString() : "-"}
+              </Text>
+            </Group>
+
             <Text size="sm" c="dimmed">
               {t("userQuizzes.waypointCount", { count: quiz.waypointCount })}
             </Text>
@@ -135,17 +183,86 @@ export function UserQuizzesPage(): JSX.Element {
               <Button component={Link} to={`/create?quizId=${quiz.id}`} variant="light" size="xs" disabled={!canEdit}>
                 {t("userQuizzes.editQuiz")}
               </Button>
-              <Button
-                size="xs"
-                variant="light"
-                leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                onClick={() => {
-                  setLastCopiedQuizId(quiz.id);
-                  clipboard.copy(shareLink);
-                }}
-              >
-                {copied ? t("userQuizzes.copied") : t("userQuizzes.copyLink")}
-              </Button>
+              {canEdit ? (
+                <Button
+                  size="xs"
+                  variant="light"
+                  loading={publishingQuizId === quiz.id}
+                  onClick={async () => {
+                    setPublishingQuizId(quiz.id);
+                    try {
+                      await publishQuiz(quiz.id, "");
+                      setQuizzes((current) => current.map((entry) => (entry.id === quiz.id ? { ...entry, status: "published" } : entry)));
+                    } finally {
+                      setPublishingQuizId((current) => (current === quiz.id ? null : current));
+                    }
+                  }}
+                >
+                  {t("userQuizzes.publishDraft")}
+                </Button>
+              ) : null}
+              {isPublished ? (
+                <>
+                  {isPrivate ? (
+                    <>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        onClick={() => {
+                          setLastCopiedQuizId(quiz.id);
+                          clipboard.copy(quiz.accessCode ?? "");
+                        }}
+                        disabled={!quiz.accessCode}
+                      >
+                        {copied ? t("userQuizzes.copied") : t("userQuizzes.copyCode")}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        loading={regeneratingQuizId === quiz.id}
+                        onClick={async () => {
+                          setRegeneratingQuizId(quiz.id);
+                          try {
+                            const newCode = await regenerateQuizAccessCode(quiz.id);
+                            setQuizzes((current) =>
+                              current.map((entry) => (entry.id === quiz.id ? { ...entry, isPublic: false, accessCode: newCode } : entry))
+                            );
+                          } catch (error) {
+                            setQuizzesError((error as Error).message ?? t("userQuizzes.loadError"));
+                          } finally {
+                            setRegeneratingQuizId((current) => (current === quiz.id ? null : current));
+                          }
+                        }}
+                      >
+                        {t("userQuizzes.regenerateCode")}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        onClick={() => {
+                          setLastCopiedQuizId(quiz.id);
+                          clipboard.copy(shareLink);
+                        }}
+                      >
+                        {copied ? t("userQuizzes.copied") : t("userQuizzes.copyLink")}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={<IconQrcode size={14} />}
+                        onClick={() => setQrQuiz({ id: quiz.id, title: quiz.title, shareLink })}
+                      >
+                        {t("userQuizzes.qrCode")}
+                      </Button>
+                    </>
+                  )}
+                </>
+              ) : null}
               <Button
                 size="xs"
                 variant="light"
@@ -154,18 +271,21 @@ export function UserQuizzesPage(): JSX.Element {
               >
                 {t("userQuizzes.leaderboard")}
               </Button>
-              <Anchor component={Link} to={`/play/${quiz.id}`} size="sm">
+              <Anchor component={Link} to={`/play/${playValue}`} size="sm">
                 {t("userQuizzes.openPlay")}
               </Anchor>
             </Group>
             {!canEdit ? (
               <Text size="xs" c="dimmed">{t("userQuizzes.editLockedPublished")}</Text>
             ) : null}
+            {canEdit ? (
+              <Text size="xs" c="dimmed">{t("userQuizzes.shareLockedDraft")}</Text>
+            ) : null}
           </Stack>
         </div>
       );
     });
-  }, [clipboard, lastCopiedQuizId, quizzes, t]);
+  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t, publishingQuizId]);
 
   return (
     <Stack gap="md">
@@ -237,6 +357,22 @@ export function UserQuizzesPage(): JSX.Element {
             </Table.Tbody>
           </Table>
         ) : null}
+      </Modal>
+
+      <Modal
+        opened={Boolean(qrQuiz)}
+        onClose={() => setQrQuiz(null)}
+        title={t("userQuizzes.qrCodeTitle", { title: qrQuiz?.title ?? "" })}
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">{t("userQuizzes.qrCodeHelp")}</Text>
+          {qrDataUrl ? (
+            <Image src={qrDataUrl} alt="Quiz share QR code" radius="sm" fit="contain" h={220} />
+          ) : (
+            <Group justify="center"><Loader /></Group>
+          )}
+        </Stack>
       </Modal>
     </Stack>
   );

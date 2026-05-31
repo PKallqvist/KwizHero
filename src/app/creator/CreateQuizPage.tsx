@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
 import { latLngBounds } from "leaflet";
@@ -6,6 +6,7 @@ import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as Lea
 import QRCode from "qrcode";
 import {
   ActionIcon,
+  Anchor,
   Alert,
   Badge,
   Button,
@@ -13,8 +14,11 @@ import {
   Checkbox,
   Group,
   Image,
+  Loader,
   List,
+  Modal,
   NumberInput,
+  PasswordInput,
   Paper,
   Select,
   SegmentedControl,
@@ -28,13 +32,27 @@ import {
   Title,
   VisuallyHidden,
 } from "@mantine/core";
-import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconTrash, IconX } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
-import { buildPlayShareLink, createDraftQuiz, getEditableQuizDraft, publishQuiz, updateQuizDraft } from "../../platform/firebase/quizRepository";
+import {
+  buildPlayShareLink,
+  checkAccessCodeAvailability,
+  consumeAiToken,
+  createDraftQuiz,
+  generateAutoAccessCodePreview,
+  getCurrentUserTokens,
+  getEditableQuizDraft,
+  publishQuiz,
+  seedAiAdminPreviewTokens,
+  setQuizCustomAccessCode,
+  updateQuizDraft,
+} from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
+import { generateAiQuestion, type AiDifficulty, type AiLanguage, type AiTopicCategory } from "../../platform/ai/aiGenerator";
+import { buildDraftQuestionFromAiResponse, mapAiErrorToI18nKey } from "./aiQuestionMapping";
 
 const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -44,7 +62,12 @@ type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 type RoutePreviewMode = RouteMode;
 
 const PREVIEW_PRE_REVEAL_SECONDS = 3;
-
+const AI_UNLOCK_STORAGE_KEY = "ai_gen_unlocked";
+const AI_LOADING_LABELS = [
+  "Consulting the oracle...",
+  "Brewing a question...",
+  "Digging through the archives...",
+];
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
 function previewChoiceCardStyle(index: number): CSSProperties {
@@ -81,7 +104,9 @@ interface WaypointPickerProps {
   drawingLegPoints: Array<{ lat: number; lng: number }>;
   mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
+  userViewportControlled: boolean;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
+  onUserViewportControl: () => void;
   onChange: (lat: number, lng: number) => void;
   onDrawPointAdd: (lat: number, lng: number) => void;
 }
@@ -121,8 +146,8 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <FitWaypointsBounds waypoints={props.waypoints} enabled={props.viewport === null} />
-      <EnsureSelectedWaypointVisible waypoint={selectedWaypoint} />
-      <TrackMapViewport onViewportChange={props.onViewportChange} />
+      <EnsureSelectedWaypointVisible waypoint={selectedWaypoint} enabled={!props.userViewportControlled} />
+      <TrackMapViewport onViewportChange={props.onViewportChange} onUserInteraction={props.onUserViewportControl} />
       {props.orderedRoute && props.waypoints.length > 1 ? (
         <>
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
@@ -251,28 +276,33 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
   );
 }
 
-function EnsureSelectedWaypointVisible(props: { waypoint: DraftWaypointInput | null }): null {
+function EnsureSelectedWaypointVisible({ waypoint, enabled = true }: { waypoint: DraftWaypointInput | null; enabled?: boolean }): null {
   const map = useMap();
 
   useEffect(() => {
-    if (!props.waypoint) return;
+    if (!enabled) return;
+    if (!waypoint) return;
 
-    const target: [number, number] = [props.waypoint.lat, props.waypoint.lng];
+    const target: [number, number] = [waypoint.lat, waypoint.lng];
     map.panTo(target, { animate: true, duration: 0.35 });
-  }, [map, props.waypoint?.lat, props.waypoint?.lng]);
+  }, [enabled, map, waypoint, waypoint?.lat, waypoint?.lng]);
 
   return null;
 }
 
-function TrackMapViewport(props: {
+function TrackMapViewport({
+  onViewportChange,
+  onUserInteraction,
+}: {
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
+  onUserInteraction: () => void;
 }): null {
   const map = useMap();
 
   useEffect(() => {
     const reportViewport = () => {
       const center = map.getCenter();
-      props.onViewportChange({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
+      onViewportChange({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
     };
 
     reportViewport();
@@ -283,7 +313,22 @@ function TrackMapViewport(props: {
       map.off("moveend", reportViewport);
       map.off("zoomend", reportViewport);
     };
-  }, [map, props.onViewportChange]);
+  }, [map, onViewportChange]);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const reportInteraction = () => onUserInteraction();
+
+    container.addEventListener("wheel", reportInteraction, { passive: true });
+    container.addEventListener("mousedown", reportInteraction);
+    container.addEventListener("touchstart", reportInteraction, { passive: true });
+
+    return () => {
+      container.removeEventListener("wheel", reportInteraction);
+      container.removeEventListener("mousedown", reportInteraction);
+      container.removeEventListener("touchstart", reportInteraction);
+    };
+  }, [map, onUserInteraction]);
 
   return null;
 }
@@ -308,6 +353,7 @@ function FitWaypointsBounds(props: { waypoints: DraftWaypointInput[]; enabled?: 
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
   const fallbackCenter = props.waypoints[props.selectedWaypointIndex] ?? props.waypoints[0] ?? { lat: 57.7089, lng: 11.9746 };
 
@@ -366,6 +412,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: null,
+      funFact: undefined,
       config: {
         timerSeconds: null,
         numericTolerance: null,
@@ -381,6 +428,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
       correctChoiceIndexes: [],
       numericAnswer: null,
       letterOrderAnswer: "",
+      funFact: undefined,
       config: {
         timerSeconds: null,
         numericTolerance: null,
@@ -395,6 +443,7 @@ function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): 
     correctChoiceIndexes: [],
     numericAnswer: null,
     letterOrderAnswer: null,
+    funFact: undefined,
     config: {
       timerSeconds: null,
       numericTolerance: null,
@@ -462,10 +511,12 @@ export function CreateQuizPage(): JSX.Element {
   const isMobilePreviewLayout = useMediaQuery("(max-width: 48em)");
   const [step, setStep] = useState<WizardStep>(1);
   const [input, setInput] = useState<QuizDraftInput>({
-    title: "Soccer Team Bi-weekly Quiz",
-    description: "Public two-week quiz walk",
+    title: "",
+    description: "",
+    isPublic: true,
+    accessCode: null,
     locale: "sv",
-    organizerName: "Johan Lindqvist",
+    organizerName: null,
     organizerAvatarUrl: null,
     organizerSwish: null,
     isAnonymous: false,
@@ -495,6 +546,11 @@ export function CreateQuizPage(): JSX.Element {
   const [loadingEditableQuiz, setLoadingEditableQuiz] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [customCodeEditorOpen, setCustomCodeEditorOpen] = useState(false);
+  const [customCodeDraft, setCustomCodeDraft] = useState("");
+  const [customCodeStatus, setCustomCodeStatus] = useState<"" | "checking" | "available" | "taken" | "invalid">("");
+  const [customCodeSuggestion, setCustomCodeSuggestion] = useState("");
+  const [savingCustomCode, setSavingCustomCode] = useState(false);
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
   const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
@@ -511,25 +567,182 @@ export function CreateQuizPage(): JSX.Element {
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
+  const [routeMapViewportUserControlled, setRouteMapViewportUserControlled] = useState(false);
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiUnlockModalOpen, setAiUnlockModalOpen] = useState(false);
+  const [aiUnlocked, setAiUnlocked] = useState(false);
+  const [aiPasswordDraft, setAiPasswordDraft] = useState("");
+  const [aiPasswordShake, setAiPasswordShake] = useState(false);
+  const [aiTopic, setAiTopic] = useState("");
+  const [aiTopicCategory, setAiTopicCategory] = useState<AiTopicCategory>("history");
+  const [aiFreePrompt, setAiFreePrompt] = useState("");
+  const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("medium");
+  const [aiQuestionType, setAiQuestionType] = useState<QuestionType>("multiple_choice");
+  const [aiLanguage, setAiLanguage] = useState<AiLanguage>("sv");
+  const [aiChoiceCount, setAiChoiceCount] = useState(4);
+  const [aiCorrectAnswerCount, setAiCorrectAnswerCount] = useState(1);
+  const [aiTokenBalance, setAiTokenBalance] = useState<number | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoadingLabelIndex, setAiLoadingLabelIndex] = useState(0);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPreviewQuestion, setAiPreviewQuestion] = useState<DraftQuestionInput | null>(null);
+  const [aiPreviewSourceVerified, setAiPreviewSourceVerified] = useState(true);
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
   const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
-  const focusWaypointNameAfterAddRef = useRef(false);
+  const focusWaypointNameAfterAddRef = useRef<number | null>(null);
+  const pendingSelectNewestWaypointRef = useRef(false);
   const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
   const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
 
+  const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
   const shareLink = useMemo(() => {
     if (!result) return "";
-    return buildPlayShareLink(result.quizId);
-  }, [result]);
+    const playValue = !input.isPublic && editingQuizStatus === "published" && displayedAccessCode ? displayedAccessCode : result.quizId;
+    return buildPlayShareLink(playValue);
+  }, [displayedAccessCode, editingQuizStatus, input.isPublic, result]);
+  const aiPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
+  const aiPasswordConfigured = aiPassword.length > 0;
+
+  useEffect(() => {
+    setAiUnlocked(localStorage.getItem(AI_UNLOCK_STORAGE_KEY) === "true");
+  }, []);
+
+  useEffect(() => {
+    if (!aiLoading) {
+      setAiLoadingLabelIndex(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setAiLoadingLabelIndex((index) => (index + 1) % AI_LOADING_LABELS.length);
+    }, 1400);
+    return () => clearInterval(timer);
+  }, [aiLoading]);
+
+  useEffect(() => {
+    setAiCorrectAnswerCount((previous) => Math.max(1, Math.min(previous, aiChoiceCount)));
+  }, [aiChoiceCount]);
+
+  async function refreshAiTokenBalance(): Promise<void> {
+    try {
+      const tokens = await getCurrentUserTokens();
+      setAiTokenBalance(tokens.aiTokens);
+    } catch {
+      setAiTokenBalance(0);
+    }
+  }
+
+  function openAiGenerator(): void {
+    setAiError(null);
+    setAiPreviewQuestion(null);
+    setAiPreviewSourceVerified(true);
+    setAiQuestionType(currentQuestion?.questionType ?? "multiple_choice");
+    setAiLanguage(input.locale === "sv" ? "sv" : "en");
+    if (!aiUnlocked) {
+      setAiUnlockModalOpen(true);
+      return;
+    }
+    setAiPanelOpen(true);
+    void refreshAiTokenBalance();
+  }
+
+  async function submitAiUnlock(): Promise<void> {
+    if (!aiPasswordConfigured) {
+      setAiError(t("creator.questions.aiErrorApiKeyMissing"));
+      return;
+    }
+    if (aiPasswordDraft === aiPassword) {
+      try {
+        const seeded = await seedAiAdminPreviewTokens(9999);
+        setAiTokenBalance(seeded.aiTokens);
+      } catch {
+        setAiError(t("creator.questions.aiErrorTokenUpdate"));
+        return;
+      }
+      localStorage.setItem(AI_UNLOCK_STORAGE_KEY, "true");
+      setAiUnlocked(true);
+      setAiUnlockModalOpen(false);
+      setAiPasswordDraft("");
+      setAiPanelOpen(true);
+      void refreshAiTokenBalance();
+      return;
+    }
+    setAiPasswordShake(true);
+    window.setTimeout(() => setAiPasswordShake(false), 350);
+  }
+
+  async function generateQuestionWithAi(): Promise<void> {
+    if (!currentQuestion) return;
+    setAiError(null);
+    const topic = aiTopic.trim();
+    if (topic.length < 2) {
+      setAiError(t("creator.questions.aiErrorInvalidJson"));
+      return;
+    }
+
+    const currentBalance = aiTokenBalance ?? 0;
+    if (currentBalance < 1) {
+      setAiError(t("creator.questions.aiNoTokens"));
+      return;
+    }
+
+    setAiLoading(true);
+    setAiPreviewQuestion(null);
+    setAiPreviewSourceVerified(true);
+    try {
+      const response = await generateAiQuestion({
+        topic,
+        topicCategory: aiTopicCategory,
+        freePrompt: aiFreePrompt.trim() || undefined,
+        difficulty: aiDifficulty,
+        questionType: aiQuestionType,
+        language: aiLanguage,
+        choiceCount: aiQuestionType === "multiple_choice" ? aiChoiceCount : undefined,
+        correctAnswerCount: aiQuestionType === "multiple_choice" ? aiCorrectAnswerCount : undefined,
+      });
+
+      const previewQuestion = buildDraftQuestionFromAiResponse({
+        questionType: aiQuestionType,
+        response,
+        config: {
+          ...currentQuestion.config,
+        },
+      });
+
+      try {
+        const tokenUpdate = await consumeAiToken();
+        setAiTokenBalance(tokenUpdate.aiTokens);
+      } catch {
+        setAiError(t("creator.questions.aiErrorTokenUpdate"));
+        setAiPreviewQuestion(null);
+        return;
+      }
+
+      setAiPreviewQuestion(previewQuestion);
+      setAiPreviewSourceVerified(response.sourceVerified);
+    } catch (error) {
+      setAiError(t(mapAiErrorToI18nKey(error)));
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function applyAiPreviewQuestion(): void {
+    if (!aiPreviewQuestion || !currentQuestion) return;
+    updateCurrentQuestion({
+      ...currentQuestion,
+      ...aiPreviewQuestion,
+    });
+    setAiPanelOpen(false);
+  }
 
   useEffect(() => {
     async function buildQr(): Promise<void> {
@@ -570,8 +783,9 @@ export function CreateQuizPage(): JSX.Element {
         if (!mounted) return;
         setError(getReadableError(e));
       } finally {
-        if (!mounted) return;
-        setLoadingEditableQuiz(false);
+        if (mounted) {
+          setLoadingEditableQuiz(false);
+        }
       }
     }
 
@@ -584,7 +798,104 @@ export function CreateQuizPage(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, [editingQuizId, isEditingExistingQuiz]);
+  }, [editingQuizId, isEditingExistingQuiz, t]);
+
+  useEffect(() => {
+    if (input.isPublic) {
+      setCustomCodeEditorOpen(false);
+      setCustomCodeDraft("");
+      setCustomCodeStatus("");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    if (!input.accessCode) {
+      const nextCode = generateAutoAccessCodePreview();
+      setInput((previous) => ({
+        ...previous,
+        accessCode: nextCode,
+      }));
+      setCustomCodeDraft(nextCode);
+      return;
+    }
+
+    if (!customCodeEditorOpen) {
+      setCustomCodeDraft(input.accessCode);
+    }
+  }, [customCodeEditorOpen, input.accessCode, input.isPublic]);
+
+  useEffect(() => {
+    if (!customCodeEditorOpen || input.isPublic) return;
+
+    const trimmed = customCodeDraft.trim();
+    if (trimmed.length === 0) {
+      setCustomCodeStatus("");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    if (!/^[A-Za-z0-9-]{4,20}$/.test(trimmed)) {
+      setCustomCodeStatus("invalid");
+      setCustomCodeSuggestion("");
+      return;
+    }
+
+    setCustomCodeStatus("checking");
+    const timeout = setTimeout(() => {
+      checkAccessCodeAvailability(trimmed, result?.quizId)
+        .then((availability) => {
+          if (availability.available) {
+            setCustomCodeStatus("available");
+            setCustomCodeSuggestion("");
+            return;
+          }
+          setCustomCodeStatus("taken");
+          setCustomCodeSuggestion(availability.suggestion ?? "");
+        })
+        .catch(() => {
+          // If live availability check fails (network/rules), keep format-valid state
+          // so creators can still try saving and get a concrete backend error.
+          setCustomCodeStatus("");
+          setCustomCodeSuggestion("");
+        });
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [customCodeDraft, customCodeEditorOpen, input.isPublic, result?.quizId]);
+
+  function setPrivateAccessCode(nextCode: string): void {
+    setInput((previous) => ({
+      ...previous,
+      isPublic: false,
+      accessCode: nextCode,
+    }));
+  }
+
+  async function copyAccessCode(): Promise<void> {
+    if (!displayedAccessCode) return;
+    await navigator.clipboard.writeText(displayedAccessCode);
+  }
+
+  async function saveCustomAccessCode(): Promise<void> {
+    const trimmed = customCodeDraft.trim();
+    if (!trimmed || customCodeStatus === "invalid" || customCodeStatus === "checking") return;
+
+    setSavingCustomCode(true);
+    setError(null);
+    try {
+      if (result?.quizId) {
+        await setQuizCustomAccessCode(result.quizId, trimmed);
+      }
+      setPrivateAccessCode(trimmed);
+      setCustomCodeEditorOpen(false);
+      setCustomCodeSuggestion("");
+      setCustomCodeStatus("");
+    } catch (e) {
+      setError(getReadableError(e));
+    } finally {
+      setSavingCustomCode(false);
+    }
+  }
 
   function updateCurrentWaypoint(next: DraftWaypointInput): void {
     setInput((prev) => {
@@ -731,11 +1042,9 @@ export function CreateQuizPage(): JSX.Element {
     setDrawingLegPoints([]);
     setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
-    focusWaypointNameAfterAddRef.current = true;
-    let nextWaypointIndex = 0;
+    pendingSelectNewestWaypointRef.current = true;
     setInput((prev) => {
-      nextWaypointIndex = prev.waypoints.length;
-      const waypoint = createDefaultWaypoint(nextWaypointIndex);
+      const waypoint = createDefaultWaypoint(prev.waypoints.length);
       const waypoints = [
         ...prev.waypoints,
         {
@@ -746,12 +1055,15 @@ export function CreateQuizPage(): JSX.Element {
       ];
       return { ...prev, waypoints };
     });
-    setSelectedWaypointIndex(nextWaypointIndex);
-    setSelectedQuestionIndex(0);
   }
 
   function addWaypoint(): void {
     addWaypointAt();
+  }
+
+  function fitRouteMapToScreen(): void {
+    setRouteMapViewportUserControlled(false);
+    setRouteMapViewport(null);
   }
 
   function handleRouteMapClick(lat: number, lng: number): void {
@@ -912,6 +1224,13 @@ export function CreateQuizPage(): JSX.Element {
   }, []);
 
   async function onCreate(): Promise<void> {
+    const hasRequiredIdentityData = input.title.trim().length > 2 && input.description.trim().length > 0;
+    if (!hasRequiredIdentityData) {
+      setStep(1);
+      setError(t("creator.publish.errorIdentityRequired"));
+      return;
+    }
+
     setError(null);
     setSavingDraft(true);
     try {
@@ -1036,16 +1355,16 @@ export function CreateQuizPage(): JSX.Element {
     setManualDrawError(null);
   }
 
-  function cancelManualLegDrawing(): void {
+  const cancelManualLegDrawing = useCallback((): void => {
     setDrawingLegIndex(null);
     setDrawingLegPoints([]);
     setManualDrawError(null);
-  }
+  }, []);
 
-  function undoManualLegPoint(): void {
+  const undoManualLegPoint = useCallback((): void => {
     setDrawingLegPoints((previous) => previous.slice(0, -1));
     setManualDrawError(null);
-  }
+  }, []);
 
   function addManualLegPoint(lat: number, lng: number): void {
     if (drawingLegIndex === null) return;
@@ -1053,7 +1372,7 @@ export function CreateQuizPage(): JSX.Element {
     setManualDrawError(null);
   }
 
-  function finishManualLegDrawing(): void {
+  const finishManualLegDrawing = useCallback((): void => {
     if (drawingLegIndex === null) return;
     const fromWaypoint = input.waypoints[drawingLegIndex];
     const toWaypoint = input.waypoints[drawingLegIndex + 1];
@@ -1080,7 +1399,7 @@ export function CreateQuizPage(): JSX.Element {
       },
     });
     cancelManualLegDrawing();
-  }
+  }, [cancelManualLegDrawing, drawingLegIndex, drawingLegPoints, input, t]);
 
   function selectQuestion(index: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
@@ -1130,7 +1449,17 @@ export function CreateQuizPage(): JSX.Element {
     setChoiceDraft("");
     setChoiceDraftIsCorrect(false);
     setChoiceDraftVisible(currentQuestion.choices.length === 0);
-  }, [selectedWaypointIndex, selectedQuestionIndex, currentQuestion?.questionType]);
+  }, [currentQuestion, selectedWaypointIndex, selectedQuestionIndex]);
+
+  useEffect(() => {
+    if (!pendingSelectNewestWaypointRef.current) return;
+    const newestWaypointIndex = input.waypoints.length - 1;
+    if (newestWaypointIndex < 0) return;
+    pendingSelectNewestWaypointRef.current = false;
+    focusWaypointNameAfterAddRef.current = newestWaypointIndex;
+    setSelectedWaypointIndex(newestWaypointIndex);
+    setSelectedQuestionIndex(0);
+  }, [input.waypoints.length]);
 
   useEffect(() => {
     if (!currentWaypoint) return;
@@ -1144,11 +1473,12 @@ export function CreateQuizPage(): JSX.Element {
     setMoveMode(false);
     setMoveModePulse(false);
     setFocusedQuestionIndex(null);
-  }, [selectedWaypointIndex, currentWaypoint?.questions.length, selectedQuestionIndex]);
+  }, [currentWaypoint, selectedWaypointIndex, selectedQuestionIndex]);
 
   useEffect(() => {
-    if (!currentWaypoint || !focusWaypointNameAfterAddRef.current) return;
-    focusWaypointNameAfterAddRef.current = false;
+    const focusTargetIndex = focusWaypointNameAfterAddRef.current;
+    if (focusTargetIndex === null || selectedWaypointIndex !== focusTargetIndex || !currentWaypoint) return;
+    focusWaypointNameAfterAddRef.current = null;
     requestAnimationFrame(() => {
       waypointNameInputRef.current?.focus();
       waypointNameInputRef.current?.select();
@@ -1160,7 +1490,7 @@ export function CreateQuizPage(): JSX.Element {
     if (step !== 3 || drawingLegIndex >= input.waypoints.length - 1) {
       cancelManualLegDrawing();
     }
-  }, [drawingLegIndex, input.waypoints.length, step]);
+  }, [cancelManualLegDrawing, drawingLegIndex, input.waypoints.length, step]);
 
   useEffect(() => {
     if (drawingLegIndex === null || step !== 3) return;
@@ -1197,7 +1527,7 @@ export function CreateQuizPage(): JSX.Element {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [drawingLegIndex, step, drawingLegPoints.length, input.waypoints.length]);
+  }, [cancelManualLegDrawing, drawingLegIndex, finishManualLegDrawing, step, drawingLegPoints.length, input.waypoints.length, undoManualLegPoint]);
 
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
@@ -1236,7 +1566,7 @@ export function CreateQuizPage(): JSX.Element {
     : null;
 
   const canGoNext =
-    (step === 1 && input.title.trim().length > 2) ||
+    (step === 1 && input.title.trim().length > 2 && input.description.trim().length > 0) ||
     step === 2 ||
     (step === 3 && hasWaypointData) ||
     (step === 4 && hasQuestionData) ||
@@ -1260,10 +1590,6 @@ export function CreateQuizPage(): JSX.Element {
     { value: "hiking", label: t("creator.route.routeModeHiking") },
     { value: "manual", label: t("creator.route.routeModeManual") },
   ];
-
-  function getLegRouteMode(legIndex: number): RoutePreviewMode {
-    return input.ruleset.routeLegModes[legIndex] ?? defaultRouteMode;
-  }
 
   function setLegRouteMode(legIndex: number, mode: RoutePreviewMode): void {
     const nextLegModes = [...input.ruleset.routeLegModes];
@@ -1390,7 +1716,7 @@ export function CreateQuizPage(): JSX.Element {
 
     return input.waypoints.slice(0, -1).map((waypoint, index) => {
       const next = input.waypoints[index + 1];
-      const mode = getLegRouteMode(index);
+      const mode = input.ruleset.routeLegModes[index] ?? defaultRouteMode;
       const manualLegPoints = input.ruleset.routeLegCoordinates[index] ?? [];
       const anchoredManualLegPoints = buildAnchoredManualLegPoints(
         { lat: waypoint.lat, lng: waypoint.lng },
@@ -1448,7 +1774,14 @@ export function CreateQuizPage(): JSX.Element {
           </Alert>
         ) : null}
 
-        <Stepper active={step - 1} onStepClick={(n) => setStep((n + 1) as WizardStep)} allowNextStepsSelect={false}>
+        <Stepper
+          active={step - 1}
+          onStepClick={(n) => {
+            if (!isEditingExistingQuiz) return;
+            setStep((n + 1) as WizardStep);
+          }}
+          allowNextStepsSelect={isEditingExistingQuiz}
+        >
           <Stepper.Step label={t("creator.steps.identity")} />
           <Stepper.Step label={t("creator.steps.rules")} />
           <Stepper.Step label={t("creator.steps.route")} />
@@ -1482,13 +1815,23 @@ export function CreateQuizPage(): JSX.Element {
               value={input.description}
               onChange={(e) => setInput({ ...input, description: e.currentTarget.value })}
             />
-            <TextInput
-              label={t("creator.identity.labelOrganizerName")}
-              value={input.organizerName ?? ""}
-              onChange={(e) => setInput({
-                ...input,
-                organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
-              })}
+            <Switch
+              label={t("creator.identity.labelPublicQuiz")}
+              checked={input.isPublic}
+              onChange={(event) => {
+                const isPublic = event.currentTarget.checked;
+                setInput({
+                  ...input,
+                  isPublic,
+                  accessCode: isPublic ? null : input.accessCode ?? generateAutoAccessCodePreview(),
+                });
+                if (isPublic) {
+                  setCustomCodeEditorOpen(false);
+                  setCustomCodeDraft("");
+                  setCustomCodeStatus("");
+                  setCustomCodeSuggestion("");
+                }
+              }}
             />
             <Switch
               label={t("creator.identity.labelAnonymousOrganizer")}
@@ -1496,8 +1839,20 @@ export function CreateQuizPage(): JSX.Element {
               onChange={(event) => setInput({
                 ...input,
                 isAnonymous: event.currentTarget.checked,
+                organizerName: event.currentTarget.checked ? null : input.organizerName,
+                organizerAvatarUrl: event.currentTarget.checked ? null : input.organizerAvatarUrl,
               })}
             />
+            {!input.isAnonymous ? (
+              <TextInput
+                label={t("creator.identity.labelOrganizerName")}
+                value={input.organizerName ?? ""}
+                onChange={(e) => setInput({
+                  ...input,
+                  organizerName: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
+                })}
+              />
+            ) : null}
             {!input.isAnonymous ? (
               <TextInput
                 label={t("creator.identity.labelOrganizerAvatarUrl")}
@@ -1508,6 +1863,111 @@ export function CreateQuizPage(): JSX.Element {
                   organizerAvatarUrl: e.currentTarget.value.trim().length > 0 ? e.currentTarget.value : null,
                 })}
               />
+            ) : null}
+
+            {!input.isPublic ? (
+              <Card withBorder radius="md" className="kwiz-creator-access-code-card">
+                <Stack gap="sm">
+                  <Group justify="space-between" align="flex-start" wrap="wrap">
+                    <Stack gap={2}>
+                      <Text fw={600}>{t("creator.identity.accessCodeTitle")}</Text>
+                      <Text size="sm" c="dimmed">
+                        {t("creator.identity.accessCodeHelp")}
+                      </Text>
+                    </Stack>
+                    <Badge variant="light" color="grape">
+                      {t("creator.identity.accessCodePrivateBadge")}
+                    </Badge>
+                  </Group>
+
+                  <Paper withBorder radius="md" p="sm">
+                    <Group justify="space-between" align="center" wrap="wrap">
+                      <Stack gap={0}>
+                        <Text size="xs" c="dimmed">
+                          {t("creator.identity.accessCodeCurrent")}
+                        </Text>
+                        <Text fw={700}>{displayedAccessCode || "-"}</Text>
+                      </Stack>
+                      <Group gap="xs" wrap="wrap">
+                        <Button variant="light" size="xs" onClick={() => void copyAccessCode()} disabled={!displayedAccessCode}>
+                          {t("creator.identity.copyCode")}
+                        </Button>
+                        <Button
+                          variant="light"
+                          size="xs"
+                          onClick={() => {
+                            const nextCode = generateAutoAccessCodePreview();
+                            setPrivateAccessCode(nextCode);
+                            setCustomCodeDraft(nextCode);
+                            setCustomCodeEditorOpen(true);
+                            setCustomCodeStatus("");
+                            setCustomCodeSuggestion("");
+                          }}
+                        >
+                          {t("creator.identity.generateNewCode")}
+                        </Button>
+                        <Button
+                          variant="light"
+                          size="xs"
+                          onClick={() => {
+                            setCustomCodeEditorOpen((current) => !current);
+                            setCustomCodeDraft(displayedAccessCode);
+                          }}
+                        >
+                          {customCodeEditorOpen ? t("common.cancel") : t("creator.identity.customizeCode")}
+                        </Button>
+                      </Group>
+                    </Group>
+                  </Paper>
+
+                  {customCodeEditorOpen ? (
+                    <Card withBorder radius="md" p="sm">
+                      <Stack gap="sm">
+                        <TextInput
+                          label={t("creator.identity.customCodeLabel")}
+                          value={customCodeDraft}
+                          onChange={(event) => setCustomCodeDraft(event.currentTarget.value)}
+                          description={t("creator.identity.customCodeHelp")}
+                        />
+                        {customCodeStatus === "invalid" ? (
+                          <Alert color="yellow" variant="light">
+                            {t("creator.identity.customCodeInvalid")}
+                          </Alert>
+                        ) : null}
+                        {customCodeStatus === "taken" ? (
+                          <Alert color="orange" variant="light">
+                            <Stack gap={4}>
+                              <Text size="sm">{t("creator.identity.customCodeTaken")}</Text>
+                              {customCodeSuggestion ? (
+                                <Button
+                                  variant="subtle"
+                                  size="xs"
+                                  onClick={() => setCustomCodeDraft(customCodeSuggestion)}
+                                >
+                                  {t("creator.identity.customCodeUseSuggestion", { code: customCodeSuggestion })}
+                                </Button>
+                              ) : null}
+                            </Stack>
+                          </Alert>
+                        ) : null}
+                        <Group justify="flex-end">
+                          <Button variant="default" size="xs" onClick={() => setCustomCodeEditorOpen(false)}>
+                            {t("common.cancel")}
+                          </Button>
+                          <Button
+                            size="xs"
+                            onClick={() => void saveCustomAccessCode()}
+                            loading={savingCustomCode}
+                            disabled={customCodeStatus === "invalid" || customCodeStatus === "checking"}
+                          >
+                            {t("creator.identity.saveCustomCode")}
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </Card>
+                  ) : null}
+                </Stack>
+              </Card>
             ) : null}
           </SimpleGrid>
         ) : null}
@@ -1795,7 +2255,12 @@ export function CreateQuizPage(): JSX.Element {
               {currentWaypoint ? (
                 <Card withBorder radius="md" p="sm">
                   <Stack gap="xs" className="kwiz-creator-map-shell">
-                    <Text size="sm" fw={600}>{t("creator.route.mapHint")}</Text>
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Text size="sm" fw={600}>{t("creator.route.mapHint")}</Text>
+                      <Button size="xs" variant="light" onClick={fitRouteMapToScreen}>
+                        {t("creator.route.fitScreen")}
+                      </Button>
+                    </Group>
                     {addMultipleWaypointsMode ? (
                       <Badge color="orange" variant="light" className="kwiz-align-self-start">
                         {t("creator.route.addMultipleWaypointsActive")}
@@ -1851,7 +2316,9 @@ export function CreateQuizPage(): JSX.Element {
                       drawingLegPoints={drawingLegPoints}
                       mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
+                      userViewportControlled={routeMapViewportUserControlled}
                       onViewportChange={setRouteMapViewport}
+                      onUserViewportControl={() => setRouteMapViewportUserControlled(true)}
                       onChange={handleRouteMapClick}
                       onDrawPointAdd={addManualLegPoint}
                     />
@@ -1866,9 +2333,19 @@ export function CreateQuizPage(): JSX.Element {
                   <>
                     <Group justify="space-between" align="center" wrap="nowrap">
                       <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
-                      <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
-                        {t("creator.questions.addCard")}
-                      </Button>
+                      <Group gap="xs" wrap="nowrap">
+                        <Button
+                          size="xs"
+                          variant="light"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={openAiGenerator}
+                        >
+                          {t("creator.questions.generateWithAi")}
+                        </Button>
+                        <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
+                          {t("creator.questions.addCard")}
+                        </Button>
+                      </Group>
                     </Group>
 
                     {currentWaypoint.questions.length === 0 ? (
@@ -1968,6 +2445,14 @@ export function CreateQuizPage(): JSX.Element {
                           >
                             <IconPlus size={14} />
                           </ActionIcon>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconSparkles size={12} />}
+                            onClick={openAiGenerator}
+                          >
+                            {t("creator.questions.generateWithAi")}
+                          </Button>
                           <ActionIcon
                             variant="subtle"
                             color="red"
@@ -2177,7 +2662,12 @@ export function CreateQuizPage(): JSX.Element {
                                                 checked={choiceDraftIsCorrect}
                                                 onChange={(event) => setChoiceDraftIsCorrect(event.currentTarget.checked)}
                                               />
-                                              <ActionIcon variant="subtle" color="teal" onClick={appendChoiceFromDraft}>
+                                              <ActionIcon
+                                                variant="subtle"
+                                                color="teal"
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={appendChoiceFromDraft}
+                                              >
                                                 <IconPlus size={14} />
                                               </ActionIcon>
                                             </Group>
@@ -2191,7 +2681,9 @@ export function CreateQuizPage(): JSX.Element {
                                               placeholder={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + currentQuestion.choices.length) })}
                                               onFocus={setPreviewEditingFromFocus}
                                               onBlur={() => {
-                                                if (choiceDraft.trim().length === 0) {
+                                                if (choiceDraft.trim().length > 0) {
+                                                  persistChoiceDraft({ keepDraftVisible: true, refocus: false });
+                                                } else {
                                                   setChoiceDraftVisible(false);
                                                 }
                                                 clearPreviewEditingFromBlur();
@@ -2215,10 +2707,15 @@ export function CreateQuizPage(): JSX.Element {
                                           style={previewChoiceCardStyle(currentQuestion.choices.length)}
                                         >
                                           <Stack justify="center" align="center" className="kwiz-creator-choice-add-shell">
-                                            <ActionIcon variant="subtle" color="teal" onClick={() => {
-                                              setChoiceDraftVisible(true);
-                                              requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
-                                            }}>
+                                            <ActionIcon
+                                              variant="subtle"
+                                              color="teal"
+                                              onMouseDown={(event) => event.preventDefault()}
+                                              onClick={() => {
+                                                setChoiceDraftVisible(true);
+                                                requestAnimationFrame(() => choiceDraftInputRef.current?.focus());
+                                              }}
+                                            >
                                               <IconPlus size={18} />
                                             </ActionIcon>
                                           </Stack>
@@ -2350,7 +2847,7 @@ export function CreateQuizPage(): JSX.Element {
                     </Stack>
                   </Card>
 
-                  {false ? (
+                  {input.waypoints.length < 0 ? (
                   <Card withBorder radius="md" p="sm">
                     <Stack gap="sm">
                       <Group justify="space-between" align="center" wrap="wrap">
@@ -2655,13 +3152,242 @@ export function CreateQuizPage(): JSX.Element {
           </SimpleGrid>
         ) : null}
 
+        <Modal
+          opened={aiUnlockModalOpen}
+          onClose={() => setAiUnlockModalOpen(false)}
+          title={t("creator.questions.aiUnlockTitle")}
+          centered
+          size="sm"
+        >
+          <Stack className={aiPasswordShake ? "kwiz-ai-shake" : undefined}>
+            <PasswordInput
+              label={t("creator.questions.aiUnlockPassword")}
+              value={aiPasswordDraft}
+              onChange={(event) => setAiPasswordDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void submitAiUnlock();
+                }
+              }}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAiUnlockModalOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button onClick={() => void submitAiUnlock()}>{t("creator.questions.aiUnlockAction")}</Button>
+            </Group>
+          </Stack>
+        </Modal>
+
+        <Modal
+          opened={aiPanelOpen}
+          onClose={() => setAiPanelOpen(false)}
+          title={t("creator.questions.generateWithAi")}
+          centered
+          size="lg"
+        >
+          <Stack gap="sm">
+            <Group justify="space-between" align="center">
+              <Text size="sm" c="dimmed">{t("creator.questions.aiPanelSubtitle")}</Text>
+              <Badge color={(aiTokenBalance ?? 0) > 0 ? "teal" : "orange"} variant="light">
+                {(aiTokenBalance ?? 0) > 0
+                  ? t("creator.questions.aiTokensRemaining", { count: aiTokenBalance ?? 0 })
+                  : t("creator.questions.aiNoTokens")}
+              </Badge>
+            </Group>
+
+            <TextInput
+              label={t("creator.questions.aiTopic")}
+              placeholder={t("creator.questions.aiTopicPlaceholder")}
+              value={aiTopic}
+              onChange={(event) => setAiTopic(event.currentTarget.value)}
+            />
+
+            <Select
+              label={t("creator.questions.aiTopicCategory")}
+              value={aiTopicCategory}
+              data={[
+                { value: "history", label: t("creator.questions.aiTopicCategoryHistory") },
+                { value: "music", label: t("creator.questions.aiTopicCategoryMusic") },
+                { value: "sports", label: t("creator.questions.aiTopicCategorySports") },
+                { value: "climate", label: t("creator.questions.aiTopicCategoryClimate") },
+                { value: "science", label: t("creator.questions.aiTopicCategoryScience") },
+                { value: "geography", label: t("creator.questions.aiTopicCategoryGeography") },
+                { value: "culture", label: t("creator.questions.aiTopicCategoryCulture") },
+                { value: "politics", label: t("creator.questions.aiTopicCategoryPolitics") },
+                { value: "nature", label: t("creator.questions.aiTopicCategoryNature") },
+                { value: "technology", label: t("creator.questions.aiTopicCategoryTechnology") },
+                { value: "food", label: t("creator.questions.aiTopicCategoryFood") },
+                { value: "art", label: t("creator.questions.aiTopicCategoryArt") },
+                { value: "custom", label: t("creator.questions.aiTopicCategoryCustom") },
+              ]}
+              onChange={(value) => setAiTopicCategory((value ?? "history") as AiTopicCategory)}
+            />
+
+            <Textarea
+              label={t("creator.questions.aiFreePrompt")}
+              placeholder={t("creator.questions.aiFreePromptPlaceholder")}
+              maxLength={300}
+              minRows={2}
+              autosize
+              value={aiFreePrompt}
+              onChange={(event) => setAiFreePrompt(event.currentTarget.value)}
+            />
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <SegmentedControl
+                fullWidth
+                data={[
+                  { value: "easy", label: t("creator.questions.aiDifficultyEasy") },
+                  { value: "medium", label: t("creator.questions.aiDifficultyMedium") },
+                  { value: "hard", label: t("creator.questions.aiDifficultyHard") },
+                ]}
+                value={aiDifficulty}
+                onChange={(value) => setAiDifficulty(value as AiDifficulty)}
+              />
+              <SegmentedControl
+                fullWidth
+                data={[
+                  { value: "multiple_choice", label: "A/B/C" },
+                  { value: "numeric", label: "123" },
+                  { value: "letter_order", label: "ABC" },
+                ]}
+                value={aiQuestionType}
+                onChange={(value) => setAiQuestionType(value as QuestionType)}
+              />
+            </SimpleGrid>
+
+            <Select
+              label={t("creator.questions.aiLanguage")}
+              data={[
+                { value: "sv", label: "Svenska" },
+                { value: "en", label: "English" },
+              ]}
+              value={aiLanguage}
+              onChange={(value) => setAiLanguage((value ?? "sv") as AiLanguage)}
+            />
+
+            {aiQuestionType === "multiple_choice" ? (
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                <NumberInput
+                  label={t("creator.questions.aiChoiceCount")}
+                  min={2}
+                  max={8}
+                  value={aiChoiceCount}
+                  onChange={(value) => setAiChoiceCount(typeof value === "number" ? value : 4)}
+                />
+                <NumberInput
+                  label={t("creator.questions.aiCorrectAnswerCount")}
+                  min={1}
+                  max={aiChoiceCount}
+                  value={aiCorrectAnswerCount}
+                  onChange={(value) => setAiCorrectAnswerCount(typeof value === "number" ? value : 1)}
+                />
+              </SimpleGrid>
+            ) : null}
+
+            {aiError ? (
+              <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />}>
+                {aiError}
+              </Alert>
+            ) : null}
+
+            {aiLoading ? (
+              <Paper withBorder radius="md" p="md">
+                <Stack align="center" gap="xs">
+                  <Loader size="sm" />
+                  <Text size="sm">{AI_LOADING_LABELS[aiLoadingLabelIndex]}</Text>
+                </Stack>
+              </Paper>
+            ) : null}
+
+            {aiPreviewQuestion ? (
+              <Card withBorder radius="md" p="sm">
+                <Stack gap="xs">
+                  {!aiPreviewSourceVerified ? (
+                    <Alert color="yellow" icon={<IconAlertCircle size={16} />}>
+                      {t("creator.questions.aiSourceNotVerified")}
+                    </Alert>
+                  ) : null}
+                  <Text fw={600}>{aiPreviewQuestion.text}</Text>
+                  {aiPreviewQuestion.questionType === "multiple_choice" ? (
+                    <Stack gap={4}>
+                      {aiPreviewQuestion.choices.map((choice, index) => (
+                        <Text key={`ai-preview-choice-${index}`} size="sm">
+                          {`${index + 1}. ${choice}${aiPreviewQuestion.correctChoiceIndexes.includes(index) ? "  ✓" : ""}`}
+                        </Text>
+                      ))}
+                    </Stack>
+                  ) : null}
+                  {aiPreviewQuestion.questionType === "numeric" ? (
+                    <Text size="sm">{`${t("creator.questions.numericAnswer")}: ${String(aiPreviewQuestion.numericAnswer ?? "")}`}</Text>
+                  ) : null}
+                  {aiPreviewQuestion.questionType === "letter_order" ? (
+                    <Text size="sm">{`${t("creator.questions.letterOrderAnswer")}: ${aiPreviewQuestion.letterOrderAnswer ?? ""}`}</Text>
+                  ) : null}
+                  {aiPreviewQuestion.sourceUrl ? (
+                    <Group gap={6}>
+                      <Text size="sm" c="dimmed">
+                        {t("creator.questions.aiSource")}
+                      </Text>
+                      <Anchor href={aiPreviewQuestion.sourceUrl} target="_blank" rel="noopener noreferrer" size="sm">
+                        {t("creator.questions.aiOpenSource")}
+                      </Anchor>
+                    </Group>
+                  ) : null}
+                </Stack>
+              </Card>
+            ) : null}
+
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAiPanelOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              {aiPreviewQuestion ? (
+                <>
+                  <Button
+                    variant="light"
+                    onClick={() => void generateQuestionWithAi()}
+                    disabled={aiLoading || (aiTokenBalance ?? 0) < 1}
+                  >
+                    {t("creator.questions.aiRegenerate")}
+                  </Button>
+                  <Button onClick={applyAiPreviewQuestion}>{t("creator.questions.aiUseQuestion")}</Button>
+                </>
+              ) : (
+                <Button
+                  leftSection={<IconSparkles size={14} />}
+                  onClick={() => void generateQuestionWithAi()}
+                  loading={aiLoading}
+                  disabled={(aiTokenBalance ?? 0) < 1}
+                >
+                  {t("creator.questions.aiGenerate")}
+                </Button>
+              )}
+            </Group>
+          </Stack>
+        </Modal>
+
         <Group justify="space-between">
           <Button variant="default" onClick={previousStep} disabled={step === 1}>
             {t("common.back")}
           </Button>
-          <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
-            {t("common.next")}
-          </Button>
+          <Group>
+            {isEditingExistingQuiz ? (
+              <Button
+                variant="light"
+                onClick={onCreate}
+                disabled={Boolean(firebaseConfigError) || loadingEditableQuiz || editingQuizStatus === "published"}
+                loading={savingDraft}
+              >
+                {t("creator.publish.saveDraftChanges")}
+              </Button>
+            ) : null}
+            <Button onClick={nextStep} disabled={step === 5 || !canGoNext}>
+              {t("common.next")}
+            </Button>
+          </Group>
         </Group>
 
         {error ? (

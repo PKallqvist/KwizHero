@@ -31,7 +31,17 @@ export interface DraftQuestionInput {
   correctChoiceIndexes: number[];
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
+  funFact?: string;
+  sourceUrl?: string;
   config: QuestionConfig;
+}
+
+export interface UserTokens {
+  aiTokens: number;
+  aiTokensGranted: number;
+  aiTokensPurchased: number;
+  aiTokensUsed: number;
+  aiTokensResetDate: string | null;
 }
 
 export interface DraftWaypointInput {
@@ -44,6 +54,8 @@ export interface DraftWaypointInput {
 export interface QuizDraftInput {
   title: string;
   description: string;
+  isPublic: boolean;
+  accessCode: string | null;
   locale: "en" | "sv";
   organizerName: string | null;
   organizerAvatarUrl: string | null;
@@ -58,6 +70,9 @@ export interface QuizSummary {
   title: string;
   description: string;
   status: "draft" | "published";
+  isPublic: boolean;
+  accessCode: string | null;
+  validUntil: string;
   creatorUid?: string;
   organizerName: string | null;
   organizerAvatarUrl: string | null;
@@ -80,6 +95,9 @@ export interface QuizListItem {
   title: string;
   description: string;
   status: "draft" | "published";
+  isPublic: boolean;
+  accessCode: string | null;
+  validUntil: string | null;
   waypointCount: number;
   routeDistanceKm?: number;
   createdAt: string | null;
@@ -98,6 +116,8 @@ export interface QuizWalkQuestion {
   order: number;
   questionType: QuestionType;
   text: string;
+  funFact?: string;
+  sourceUrl?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;
@@ -135,6 +155,8 @@ export interface WaypointQuestion {
   id: string;
   questionType: QuestionType;
   text: string;
+  funFact?: string;
+  sourceUrl?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;

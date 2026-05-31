@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { latLngBounds } from "leaflet";
@@ -29,7 +29,6 @@ import {
   IconAlertCircle,
   IconCheck,
   IconChevronLeft,
-  IconChevronRight,
   IconCurrentLocation,
   IconFlag,
   IconPlayerSkipForward,
@@ -46,6 +45,7 @@ import {
   getQuizWalk,
   getQuizSummary,
   markFirstDiscoverySeen,
+  resolvePlayableQuizId,
   savePlayerBadgeProgress,
   startSession,
   storePlayerBadgeUnlocks,
@@ -80,15 +80,15 @@ interface JourneyMapProps {
   orderedRoute: boolean;
 }
 
-function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coordinates | null }): null {
+function FitJourneyBounds({ waypoints, current }: { waypoints: QuizWalkWaypoint[]; current: Coordinates | null }): null {
   const map = useMap();
 
   useEffect(() => {
-    if (props.waypoints.length === 0) return;
+    if (waypoints.length === 0) return;
 
-    const points: Array<[number, number]> = props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng]);
-    if (props.current) {
-      points.push([props.current.lat, props.current.lng]);
+    const points: Array<[number, number]> = waypoints.map((waypoint) => [waypoint.lat, waypoint.lng]);
+    if (current) {
+      points.push([current.lat, current.lng]);
     }
 
     if (points.length === 1) {
@@ -97,7 +97,7 @@ function FitJourneyBounds(props: { waypoints: QuizWalkWaypoint[]; current: Coord
     }
 
     map.fitBounds(latLngBounds(points), { padding: [30, 30], animate: false });
-  }, [map, props.current, props.waypoints]);
+  }, [current, map, waypoints]);
 
   return null;
 }
@@ -224,12 +224,13 @@ export function PlayQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { setSession, setProfile } = useQuizSession();
-  const { quizId = "" } = useParams();
+  const { quizId: playValue = "" } = useParams();
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugMode = searchParams.get("debug") === "1";
 
   const [nickname, setNickname] = useState("");
   const [summary, setSummary] = useState<QuizSummary | null>(null);
+  const [resolvedQuizId, setResolvedQuizId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [quizWalk, setQuizWalk] = useState<QuizWalk | null>(null);
 
@@ -455,25 +456,32 @@ export function PlayQuizPage(): JSX.Element {
     return nearest?.index ?? unansweredIndexes[0]?.index ?? null;
   }
 
-  function getGlobalQuestionNumber(waypointIndex: number, questionIndex: number): number {
-    if (!quizWalk) return 1;
-    return quizWalk.waypoints
-      .slice(0, waypointIndex)
-      .reduce((sum, waypoint) => sum + waypoint.questions.length, 0) + questionIndex + 1;
-  }
-
-  async function loadQuiz(): Promise<void> {
+  const loadQuiz = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
-      const q = await getQuizSummary(quizId);
+      const resolved = await resolvePlayableQuizId(playValue);
+      if (!resolved) {
+        setSummary(null);
+        setResolvedQuizId(null);
+        setError(t("player.noQuiz"));
+        return;
+      }
+
+      setResolvedQuizId(resolved.quizId);
+      const q = await getQuizSummary(resolved.quizId);
       setSummary(q);
       if (!q) {
         setError(t("player.noQuiz"));
         return;
       }
+      const creatorUid = currentUserUid ?? (await getCurrentUserUid());
+      const isDraftOwnedByCreator = q.status !== "published" && q.creatorUid !== undefined && q.creatorUid === creatorUid;
+      if (q.status !== "published" && !debugMode && !isDraftOwnedByCreator) {
+        setError(t("player.errorDraftUnavailable"));
+      }
 
-      const walk = await getQuizWalk(quizId);
+      const walk = await getQuizWalk(resolved.quizId);
       if (!walk) {
         setError(t("player.errorNoPlayable"));
         return;
@@ -490,14 +498,22 @@ export function PlayQuizPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }
+  }, [currentUserUid, debugMode, playValue, t]);
 
   useEffect(() => {
-    if (summary || loading) return;
+    setSummary(null);
+    setQuizWalk(null);
+    setResolvedQuizId(null);
+    setSessionId(null);
+    setError(firebaseConfigError);
+  }, [playValue]);
+
+  useEffect(() => {
+    if (summary || loading || error) return;
     loadQuiz().catch(() => {
       // loadQuiz already pushes user-visible error state
     });
-  }, [quizId]);
+  }, [error, loadQuiz, loading, summary]);
 
   async function joinQuiz(): Promise<void> {
     if (debugMode) {
@@ -507,6 +523,11 @@ export function PlayQuizPage(): JSX.Element {
 
     if (!summary) {
       setError(t("player.errorLoadFirst"));
+      return;
+    }
+    const canJoinUnpublishedAsCreator = summary.status !== "published" && isCreator;
+    if (summary.status !== "published" && !canJoinUnpublishedAsCreator) {
+      setError(t("player.errorDraftUnavailable"));
       return;
     }
     if (!nickname.trim()) {
@@ -531,7 +552,12 @@ export function PlayQuizPage(): JSX.Element {
     }
 
     setError(null);
-    const sid = await startSession(quizId, nickname.trim());
+    if (!resolvedQuizId) {
+      setError(t("player.noQuiz"));
+      return;
+    }
+
+    const sid = await startSession(resolvedQuizId, nickname.trim());
     setSessionId(sid);
 
     const firstWaypoint = getNextWaypointIndex([]) ?? 0;
@@ -574,7 +600,12 @@ export function PlayQuizPage(): JSX.Element {
 
     const debugNickname = nickname.trim().length > 0 ? nickname.trim() : "Creator Debug";
     setError(null);
-    const sid = await startSession(quizId, debugNickname);
+    if (!resolvedQuizId) {
+      setError(t("player.noQuiz"));
+      return;
+    }
+
+    const sid = await startSession(resolvedQuizId, debugNickname);
 
     const firstWaypoint = getNextWaypointIndex([]) ?? 0;
     const firstQuestion = getFirstUnansweredQuestionIndex(quizWalk.waypoints[firstWaypoint]);
@@ -605,7 +636,7 @@ export function PlayQuizPage(): JSX.Element {
     setCountdownNow(Date.now());
   }
 
-  function setMockLocationToWaypoint(waypointIndex: number): void {
+  const setMockLocationToWaypoint = useCallback((waypointIndex: number): void => {
     if (!quizWalk) return;
     const waypoint = quizWalk.waypoints[waypointIndex];
     if (!waypoint) return;
@@ -613,7 +644,7 @@ export function PlayQuizPage(): JSX.Element {
     setPlayerCoordinates({ lat: waypoint.lat, lng: waypoint.lng });
     setDistanceToWaypoint(0);
     setError(null);
-  }
+  }, [quizWalk]);
 
   async function refreshCurrentLocation(): Promise<void> {
     if (debugMode || mockGpsWalkEnabled || !currentWaypoint || sessionComplete) return;
@@ -669,17 +700,15 @@ export function PlayQuizPage(): JSX.Element {
     if (!mockGpsWalkEnabled || !quizWalk || sessionComplete) return;
     if (lockedWaypointIndex !== null) return;
     setMockLocationToWaypoint(activeWaypointIndex);
-  }, [activeWaypointIndex, lockedWaypointIndex, mockGpsWalkEnabled, quizWalk, sessionComplete]);
+  }, [activeWaypointIndex, lockedWaypointIndex, mockGpsWalkEnabled, quizWalk, sessionComplete, setMockLocationToWaypoint]);
 
-  function getGateRadiusMeters(): number {
-    return summary?.waypointGateRadiusMeters ?? 40;
-  }
+  const gateRadiusMeters = summary?.waypointGateRadiusMeters ?? 40;
 
   useEffect(() => {
     if (!currentWaypoint || lockedWaypointIndex !== null || distanceToWaypoint === null || sessionComplete) return;
     if (pendingQuestionResume) return;
     if (waypointClearedState) return;
-    if (distanceToWaypoint > getGateRadiusMeters()) return;
+    if (distanceToWaypoint > gateRadiusMeters) return;
     setLockedWaypointIndex(activeWaypointIndex);
     setCardPhase("back");
     setError(null);
@@ -691,6 +720,7 @@ export function PlayQuizPage(): JSX.Element {
     pendingQuestionResume,
     sessionComplete,
     waypointClearedState,
+    gateRadiusMeters,
   ]);
 
   useEffect(() => {
@@ -706,7 +736,7 @@ export function PlayQuizPage(): JSX.Element {
     }, 1500);
 
     return () => window.clearTimeout(timeout);
-  }, [activeWaypointIndex, mockGpsWalkEnabled, waypointClearedState]);
+  }, [activeWaypointIndex, mockGpsWalkEnabled, setMockLocationToWaypoint, waypointClearedState]);
 
   function revealQuestionCard(): void {
     if (!currentQuestion) return;
@@ -754,11 +784,11 @@ export function PlayQuizPage(): JSX.Element {
   }
 
   function continueToNextQuestionFromMap(): void {
-    if (distanceToWaypoint === null || distanceToWaypoint > getGateRadiusMeters()) {
+    if (distanceToWaypoint === null || distanceToWaypoint > gateRadiusMeters) {
       setError(
         t("player.tooFarError", {
           actual: Math.max(0, Math.round(distanceToWaypoint ?? 0)),
-          required: getGateRadiusMeters(),
+          required: gateRadiusMeters,
         })
       );
       return;
@@ -859,12 +889,50 @@ export function PlayQuizPage(): JSX.Element {
     return keys;
   }
 
-  async function queueBadgeUnlocksForCompletion(): Promise<void> {
+  function toLocalDateKey(value: Date): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function isConsecutiveDay(previousDateKey: string, currentDateKey: string): boolean {
+    const previous = new Date(`${previousDateKey}T00:00:00`);
+    const current = new Date(`${currentDateKey}T00:00:00`);
+    if (Number.isNaN(previous.getTime()) || Number.isNaN(current.getTime())) return false;
+    const deltaMs = current.getTime() - previous.getTime();
+    return deltaMs === 24 * 60 * 60 * 1000;
+  }
+
+  async function queueBadgeUnlocksForCompletion(params: {
+    completedAt: Date;
+    isPerfectCompletion: boolean;
+  }): Promise<void> {
+    if (debugMode) return;
+    if ((summary?.status ?? "draft") !== "published") return;
+
     const progress = await getPlayerBadgeProgress();
-    const completionTriggerKeys = resolveCompletionTriggerEventKeys(new Date());
+    const completionTriggerKeys = resolveCompletionTriggerEventKeys(params.completedAt);
+    const completionDateKey = toLocalDateKey(params.completedAt);
+    let nextStreakDays: number;
+    if (progress.lastCompletedQuizDate === completionDateKey) {
+      nextStreakDays = Math.max(1, progress.playStreakDays);
+    } else if (
+      progress.lastCompletedQuizDate &&
+      isConsecutiveDay(progress.lastCompletedQuizDate, completionDateKey)
+    ) {
+      nextStreakDays = Math.max(1, progress.playStreakDays + 1);
+    } else {
+      nextStreakDays = 1;
+    }
+
     const nextProgress = {
       ...progress,
       quizzesCompleted: progress.quizzesCompleted + 1,
+      quizzesPlayedTotal: progress.quizzesPlayedTotal,
+      perfectQuizzesCompleted: progress.perfectQuizzesCompleted + (params.isPerfectCompletion ? 1 : 0),
+      playStreakDays: nextStreakDays,
+      lastCompletedQuizDate: completionDateKey,
       triggeredEventKeys: [...new Set([...progress.triggeredEventKeys, ...completionTriggerKeys])],
     };
 
@@ -943,8 +1011,13 @@ export function PlayQuizPage(): JSX.Element {
     const elapsedMs = questionStartMs ? Date.now() - questionStartMs : 0;
     setError(null);
     try {
+      if (!resolvedQuizId) {
+        setError(t("player.noQuiz"));
+        return;
+      }
+
       const result = await submitFirstAnswer({
-        quizId,
+        quizId: resolvedQuizId,
         sessionId,
         waypointId: quizWalk.waypoints[lockedWaypointIndex].id,
         questionId: currentQuestion.id,
@@ -980,8 +1053,16 @@ export function PlayQuizPage(): JSX.Element {
 
       const nextWaypointIndex = getNextWaypointIndex(nextAnswered);
       if (nextWaypointIndex === null) {
+        const totalQuestionCount = quizWalk.waypoints.reduce(
+          (sum, waypoint) => sum + waypoint.questions.length,
+          0
+        );
+        const isPerfectCompletion = correctAnswersCount + (result.isCorrect ? 1 : 0) === totalQuestionCount;
         try {
-          await queueBadgeUnlocksForCompletion();
+          await queueBadgeUnlocksForCompletion({
+            completedAt: new Date(),
+            isPerfectCompletion,
+          });
         } catch {
           // badge unlock processing should never block quiz completion
         }
@@ -997,7 +1078,7 @@ export function PlayQuizPage(): JSX.Element {
       setActiveWaypointIndex(nextWaypointIndex);
       setActiveQuestionIndex(Math.max(0, firstQuestionIdx));
       setLockedWaypointIndex(null);
-      setPendingQuestionResume(true);
+      setPendingQuestionResume(false);
       setWaypointClearedState({
         clearedWaypointTitle: lockedWaypoint.title,
         nextWaypointTitle: nextWaypoint?.title ?? "",
@@ -1039,7 +1120,7 @@ export function PlayQuizPage(): JSX.Element {
       const palette = ["#F6C453", "#1D4ED8", "#34d399", "#f472b6", "#c084fc"];
       const color = palette[Math.floor(Math.random() * palette.length)] ?? "#F6C453";
       return {
-        id: `confetti-${index}`,
+        id: `confetti-${completionReplayKey}-${index}`,
         left: Math.random() * 100,
         size: 4 + Math.random() * 4,
         delay: Math.random() * 160,
@@ -1064,8 +1145,6 @@ export function PlayQuizPage(): JSX.Element {
 
   const currentWaypointQuestionCount =
     lockedWaypointIndex !== null ? quizWalk?.waypoints[lockedWaypointIndex]?.questions.length ?? 0 : 0;
-  const currentQuestionGlobal =
-    lockedWaypointIndex !== null ? getGlobalQuestionNumber(lockedWaypointIndex, activeQuestionIndex) : 0;
   const anyOrderQuestionsEnabled = summary?.questionOrderMode === "any";
   const unansweredQuestionOptions = useMemo(() => {
     if (!quizWalk || lockedWaypointIndex === null) return [];
@@ -1242,7 +1321,7 @@ export function PlayQuizPage(): JSX.Element {
             )}
 
             {summary && !summary.isAnonymous ? (
-              <button type="button" className="kwiz-join-organizer-row" onClick={() => {}}>
+              <div className="kwiz-join-organizer-row">
                 {summary.organizerAvatarUrl ? (
                   <img src={summary.organizerAvatarUrl} alt={organizerDisplayName} className="kwiz-join-organizer-avatar-image" />
                 ) : (
@@ -1254,8 +1333,7 @@ export function PlayQuizPage(): JSX.Element {
                     {organizerDisplayName}
                   </Text>
                 </div>
-                <IconChevronRight size={16} className="kwiz-join-organizer-chevron" />
-              </button>
+              </div>
             ) : null}
 
             {summary ? (
@@ -1267,7 +1345,12 @@ export function PlayQuizPage(): JSX.Element {
                   onChange={(e) => setNickname(e.currentTarget.value)}
                   classNames={{ label: "kwiz-join-input-label", input: "kwiz-join-input-field" }}
                 />
-                <Button className="kwiz-join-submit" onClick={joinQuiz} leftSection={<IconShieldCheck size={18} />}>
+                <Button
+                  className="kwiz-join-submit"
+                  onClick={joinQuiz}
+                  leftSection={<IconShieldCheck size={18} />}
+                  disabled={summary.status !== "published"}
+                >
                   {t("player.joinTitle")}
                 </Button>
                 {isCreator ? (
@@ -1473,7 +1556,7 @@ export function PlayQuizPage(): JSX.Element {
                 targetWaypointIndex={activeWaypointIndex}
                 completedWaypointIndexes={completedWaypointIndexes}
                 current={playerCoordinates}
-                radius={getGateRadiusMeters()}
+                radius={gateRadiusMeters}
                 currentLabel={nickname || t("player.locationYou")}
                 orderedRoute={summary?.requireSequentialWaypoints ?? true}
               />
