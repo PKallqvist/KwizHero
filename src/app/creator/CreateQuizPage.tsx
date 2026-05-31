@@ -597,6 +597,7 @@ export function CreateQuizPage(): JSX.Element {
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
   const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
   const focusWaypointNameAfterAddRef = useRef<number | null>(null);
+  const pendingSelectNewestWaypointRef = useRef(false);
   const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
@@ -625,18 +626,6 @@ export function CreateQuizPage(): JSX.Element {
     }, 1400);
     return () => clearInterval(timer);
   }, [aiLoading]);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent): void {
-      if (!aiPasswordConfigured || aiUnlocked) return;
-      if (!(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "g")) return;
-      event.preventDefault();
-      setAiUnlockModalOpen(true);
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [aiPasswordConfigured, aiUnlocked]);
 
   useEffect(() => {
     setAiCorrectAnswerCount((previous) => Math.max(1, Math.min(previous, aiChoiceCount)));
@@ -1053,10 +1042,9 @@ export function CreateQuizPage(): JSX.Element {
     setDrawingLegPoints([]);
     setManualDrawError(null);
     setCoordinatesOverlayOpen(false);
-    let nextWaypointIndex = 0;
+    pendingSelectNewestWaypointRef.current = true;
     setInput((prev) => {
-      nextWaypointIndex = prev.waypoints.length;
-      const waypoint = createDefaultWaypoint(nextWaypointIndex);
+      const waypoint = createDefaultWaypoint(prev.waypoints.length);
       const waypoints = [
         ...prev.waypoints,
         {
@@ -1067,9 +1055,6 @@ export function CreateQuizPage(): JSX.Element {
       ];
       return { ...prev, waypoints };
     });
-    focusWaypointNameAfterAddRef.current = nextWaypointIndex;
-    setSelectedWaypointIndex(nextWaypointIndex);
-    setSelectedQuestionIndex(0);
   }
 
   function addWaypoint(): void {
@@ -1465,6 +1450,16 @@ export function CreateQuizPage(): JSX.Element {
     setChoiceDraftIsCorrect(false);
     setChoiceDraftVisible(currentQuestion.choices.length === 0);
   }, [currentQuestion, selectedWaypointIndex, selectedQuestionIndex]);
+
+  useEffect(() => {
+    if (!pendingSelectNewestWaypointRef.current) return;
+    const newestWaypointIndex = input.waypoints.length - 1;
+    if (newestWaypointIndex < 0) return;
+    pendingSelectNewestWaypointRef.current = false;
+    focusWaypointNameAfterAddRef.current = newestWaypointIndex;
+    setSelectedWaypointIndex(newestWaypointIndex);
+    setSelectedQuestionIndex(0);
+  }, [input.waypoints.length]);
 
   useEffect(() => {
     if (!currentWaypoint) return;
@@ -2339,16 +2334,14 @@ export function CreateQuizPage(): JSX.Element {
                     <Group justify="space-between" align="center" wrap="nowrap">
                       <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
                       <Group gap="xs" wrap="nowrap">
-                        {aiPasswordConfigured && aiUnlocked ? (
-                          <Button
-                            size="xs"
-                            variant="light"
-                            leftSection={<IconSparkles size={14} />}
-                            onClick={openAiGenerator}
-                          >
-                            {t("creator.questions.generateWithAi")}
-                          </Button>
-                        ) : null}
+                        <Button
+                          size="xs"
+                          variant="light"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={openAiGenerator}
+                        >
+                          {t("creator.questions.generateWithAi")}
+                        </Button>
                         <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
                           {t("creator.questions.addCard")}
                         </Button>
@@ -2452,16 +2445,14 @@ export function CreateQuizPage(): JSX.Element {
                           >
                             <IconPlus size={14} />
                           </ActionIcon>
-                          {aiPasswordConfigured && aiUnlocked ? (
-                            <Button
-                              size="compact-xs"
-                              variant="light"
-                              leftSection={<IconSparkles size={12} />}
-                              onClick={openAiGenerator}
-                            >
-                              {t("creator.questions.generateWithAi")}
-                            </Button>
-                          ) : null}
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconSparkles size={12} />}
+                            onClick={openAiGenerator}
+                          >
+                            {t("creator.questions.generateWithAi")}
+                          </Button>
                           <ActionIcon
                             variant="subtle"
                             color="red"
