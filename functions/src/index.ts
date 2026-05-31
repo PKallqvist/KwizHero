@@ -180,16 +180,17 @@ function buildPrompt(input: {
   language: AiLanguage;
   choiceCount: number;
   correctAnswerCount: number;
+  variationSeed: string;
 }): string {
   const languageLabel = input.language === "sv" ? "Svenska" : "English";
   const answerShapeInstructions =
     input.questionType === "multiple_choice"
-      ? `For multiple_choice:\n- Return exactly ${input.choiceCount} choices\n- Mark exactly ${input.correctAnswerCount} choices with "correct": true`
+      ? `A/B/C rules:\n- Return exactly ${input.choiceCount} choices\n- Mark exactly ${input.correctAnswerCount} choices with "correct": true\n- All wrong answers must be plausible, never silly`
       : input.questionType === "numeric"
-        ? "For numeric:\n- Set choices to []\n- Set numericAnswer to the one correct number"
-        : "For letter_order:\n- Set choices to []\n- Set letterOrderAnswer to the one correct short text answer";
+        ? "123 rules:\n- Set choices to []\n- numericAnswer must be a precise number, year, or quantity\n- letterOrderAnswer must be null"
+        : "ABC rules:\n- Set choices to []\n- letterOrderAnswer must be a single correct word or very short phrase\n- numericAnswer must be null";
 
-  return `Generate a quiz question about: "${input.topic}"\nTopic category: ${input.topicCategory}\nAdditional request: "${input.freePrompt || "none"}"\nDifficulty: ${input.difficulty}\nQuestion type: ${input.questionType}\nLanguage: ${languageLabel}\n\nRespond with valid JSON only, using this exact shape:\n{\n  "question": "Question text",\n  "choices": [{ "text": "Choice", "correct": false }],\n  "numericAnswer": null,\n  "letterOrderAnswer": null,\n  "funFact": "Short interesting fact",\n  "sourceUrl": "https://..."\n}\n\nRules:\n- No markdown, no code fences\n- Exactly one field among numericAnswer/letterOrderAnswer should be used for non-multiple_choice types\n- Keep facts accurate and specific\n- sourceUrl must be a direct http/https page that supports the fact or answer\n- sourceUrl must be a real article/page URL, not a search results URL\n- Use the requested language\n${answerShapeInstructions}`;
+  return `You are a quiz question generator for KwizHero, an outdoor quiz app where players move between waypoints and answer questions.\n\nQuestions can be about absolutely anything. The topic is always provided by the creator. Do not assume questions must be location-based or related to outdoors.\n\nGeneration brief:\n- Topic: "${input.topic}"\n- Topic category: ${input.topicCategory}\n- Creator request: "${input.freePrompt || "none"}"\n- Difficulty: ${input.difficulty}\n- Question type: ${input.questionType}\n- Language: ${languageLabel}\n\nTone and style:\n- Questions should feel surprising and rewarding to know\n- Favor unexpected angles and lesser-known but verifiable facts\n- Avoid trivial obvious questions\n- Avoid unfairly obscure questions\n- Wrong answers must be plausible\n- Fun fact must add context or surprise, not restate the answer\n\nDifficulty guide:\n- easy: likely known by a casual interested person\n- medium: requires genuine knowledge or curiosity\n- hard: suited for enthusiasts, but still fair\n\nQuality checklist (apply before responding):\n- Question has one unambiguous correct answer\n- Correct answer is factual and verifiable\n- Distractors are plausible\n- Fun fact adds value beyond restating the answer\n- Wording is specific enough to avoid ambiguity\n\n${answerShapeInstructions}\n\nOutput format:\n- Return valid JSON only\n- No markdown, no code fences\n- Use exactly this shape:\n{\n  "question": "Question text",\n  "choices": [{ "text": "Choice", "correct": false }],\n  "numericAnswer": null,\n  "letterOrderAnswer": null,\n  "funFact": "Short interesting fact",\n  "sourceUrl": "https://..."\n}\n\nSource rules:\n- sourceUrl must be a direct http/https page URL\n- sourceUrl must support the fact or answer\n- sourceUrl must not be a search results URL\n\nEach time you are called, generate a different question than you might have before. Vary the angle, the specific fact chosen, and the difficulty within the given level.\n\n(variation seed: ${input.variationSeed})`;
 }
 
 function parseAndValidateResponse(rawText: string, expected: {
@@ -309,6 +310,8 @@ async function callOpenAi(input: {
     throw new HttpsError("failed-precondition", "openai-api-key-missing");
   }
 
+  const variationSeed = Math.random().toString(36).substring(2, 9);
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -317,16 +320,16 @@ async function callOpenAi(input: {
     },
     body: JSON.stringify({
       model: "gpt-4o-mini",
-      temperature: 0.7,
+      temperature: 1.1,
       messages: [
         {
           role: "system",
           content:
-            "You are a quiz question generator for KwizHero, a location-based outdoor quiz app. Always respond with valid JSON only. No preamble, no explanation, no markdown code fences.",
+            "You are a high-quality quiz question generator for KwizHero. Always respond with valid JSON only. No preamble, no explanation, no markdown code fences.",
         },
         {
           role: "user",
-          content: buildPrompt(input),
+          content: buildPrompt({ ...input, variationSeed }),
         },
       ],
     }),
