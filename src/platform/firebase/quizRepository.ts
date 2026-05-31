@@ -180,6 +180,29 @@ export async function getCurrentUserTokens(): Promise<UserTokens> {
   };
 }
 
+export async function seedAiAdminPreviewTokens(seedValue = 9999): Promise<UserTokens> {
+  const progress = await getPlayerBadgeProgress();
+  const nextTokens = Math.max(progress.aiTokens, seedValue);
+  const nextGranted = Math.max(progress.aiTokensGranted, seedValue);
+
+  if (nextTokens !== progress.aiTokens || nextGranted !== progress.aiTokensGranted) {
+    await savePlayerBadgeProgress({
+      ...progress,
+      aiTokens: nextTokens,
+      aiTokensGranted: nextGranted,
+      aiTokensResetDate: progress.aiTokensResetDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+  }
+
+  return {
+    aiTokens: nextTokens,
+    aiTokensGranted: nextGranted,
+    aiTokensPurchased: progress.aiTokensPurchased,
+    aiTokensUsed: progress.aiTokensUsed,
+    aiTokensResetDate: progress.aiTokensResetDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
 export async function consumeAiToken(): Promise<AiTokenConsumeResult> {
   const { db } = getFirebaseServices();
   const uid = await getAnonymousUid();
@@ -686,6 +709,7 @@ function fromQuestionDoc(questionData: {
   numericTolerance?: number | null;
   letterOrderAnswer?: string | null;
   funFact?: string | null;
+  sourceUrl?: string | null;
   timerSeconds?: number | null;
 }): QuizDraftInput["waypoints"][number]["questions"][number] {
   const normalizedChoices = (questionData.choices ?? []).map((choice) => choice.text ?? "");
@@ -708,6 +732,7 @@ function fromQuestionDoc(questionData: {
     numericAnswer: questionData.numericAnswer ?? null,
     letterOrderAnswer: questionData.letterOrderAnswer ?? null,
     funFact: questionData.funFact ?? undefined,
+    sourceUrl: questionData.sourceUrl ?? undefined,
     config: {
       timerSeconds: questionData.timerSeconds ?? null,
       numericTolerance: questionData.numericTolerance ?? null,
@@ -762,6 +787,7 @@ async function persistQuizWaypoints(quizId: string, waypoints: QuizDraftInput["w
         numericTolerance: question.config.numericTolerance,
         letterOrderAnswer: question.letterOrderAnswer,
         funFact: question.funFact ?? null,
+        sourceUrl: question.sourceUrl ?? null,
         timerSeconds: question.config.timerSeconds,
         pointsIfCorrect: 1,
         createdAt: serverTimestamp(),
@@ -909,6 +935,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
           numericTolerance?: number | null;
           letterOrderAnswer?: string | null;
           funFact?: string | null;
+          sourceUrl?: string | null;
           timerSeconds?: number | null;
         })),
       };
@@ -1442,6 +1469,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             questionType?: QuestionType;
             text: string;
             funFact?: string | null;
+            sourceUrl?: string | null;
             choices: Array<{ id: string; text: string }>;
             pointsIfCorrect: number;
             timerSeconds?: number | null;
@@ -1452,6 +1480,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
             questionType: questionData.questionType ?? "multiple_choice",
             text: questionData.text,
             funFact: questionData.funFact ?? undefined,
+            sourceUrl: questionData.sourceUrl ?? undefined,
             choices: questionData.choices ?? [],
             pointsIfCorrect: questionData.pointsIfCorrect,
             config: {

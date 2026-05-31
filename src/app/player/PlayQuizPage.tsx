@@ -525,7 +525,8 @@ export function PlayQuizPage(): JSX.Element {
       setError(t("player.errorLoadFirst"));
       return;
     }
-    if (summary.status !== "published") {
+    const canJoinUnpublishedAsCreator = summary.status !== "published" && isCreator;
+    if (summary.status !== "published" && !canJoinUnpublishedAsCreator) {
       setError(t("player.errorDraftUnavailable"));
       return;
     }

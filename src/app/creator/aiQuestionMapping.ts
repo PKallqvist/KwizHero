@@ -20,6 +20,9 @@ export function mapAiErrorToI18nKey(error: unknown): string {
   if (code.includes("failed-precondition") || message.includes("openai-api-key-missing")) {
     return "creator.questions.aiErrorApiKeyMissing";
   }
+  if (message.includes("source-url-unreachable")) {
+    return "creator.questions.aiErrorSourceUnreachable";
+  }
   if (code.includes("invalid-argument") || message.includes("invalid-json-from-openai")) {
     return "creator.questions.aiErrorInvalidJson";
   }
@@ -48,6 +51,7 @@ export function buildDraftQuestionFromAiResponse(params: {
       numericAnswer: null,
       letterOrderAnswer: null,
       funFact: response.funFact,
+      sourceUrl: response.sourceUrl,
       config,
     };
   }
@@ -61,6 +65,7 @@ export function buildDraftQuestionFromAiResponse(params: {
       numericAnswer: response.numericAnswer,
       letterOrderAnswer: null,
       funFact: response.funFact,
+      sourceUrl: response.sourceUrl,
       config,
     };
   }
@@ -73,6 +78,7 @@ export function buildDraftQuestionFromAiResponse(params: {
     numericAnswer: null,
     letterOrderAnswer: response.letterOrderAnswer,
     funFact: response.funFact,
+    sourceUrl: response.sourceUrl,
     config,
   };
 }

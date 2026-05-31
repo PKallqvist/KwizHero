@@ -6,6 +6,7 @@ import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as Lea
 import QRCode from "qrcode";
 import {
   ActionIcon,
+  Anchor,
   Alert,
   Badge,
   Button,
@@ -44,12 +45,13 @@ import {
   getCurrentUserTokens,
   getEditableQuizDraft,
   publishQuiz,
+  seedAiAdminPreviewTokens,
   setQuizCustomAccessCode,
   updateQuizDraft,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
-import { generateAiQuestion, type AiDifficulty, type AiLanguage } from "../../platform/ai/aiGenerator";
+import { generateAiQuestion, type AiDifficulty, type AiLanguage, type AiTopicCategory } from "../../platform/ai/aiGenerator";
 import { buildDraftQuestionFromAiResponse, mapAiErrorToI18nKey } from "./aiQuestionMapping";
 
 const now = new Date();
@@ -102,7 +104,9 @@ interface WaypointPickerProps {
   drawingLegPoints: Array<{ lat: number; lng: number }>;
   mapHeightClassName: string;
   viewport: { lat: number; lng: number; zoom: number } | null;
+  userViewportControlled: boolean;
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
+  onUserViewportControl: () => void;
   onChange: (lat: number, lng: number) => void;
   onDrawPointAdd: (lat: number, lng: number) => void;
 }
@@ -142,8 +146,8 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <FitWaypointsBounds waypoints={props.waypoints} enabled={props.viewport === null} />
-      <EnsureSelectedWaypointVisible waypoint={selectedWaypoint} />
-      <TrackMapViewport onViewportChange={props.onViewportChange} />
+      <EnsureSelectedWaypointVisible waypoint={selectedWaypoint} enabled={!props.userViewportControlled} />
+      <TrackMapViewport onViewportChange={props.onViewportChange} onUserInteraction={props.onUserViewportControl} />
       {props.orderedRoute && props.waypoints.length > 1 ? (
         <>
           {props.waypoints.slice(0, -1).map((waypoint, index) => {
@@ -272,23 +276,26 @@ function WaypointPicker(props: WaypointPickerProps): JSX.Element {
   );
 }
 
-function EnsureSelectedWaypointVisible({ waypoint }: { waypoint: DraftWaypointInput | null }): null {
+function EnsureSelectedWaypointVisible({ waypoint, enabled = true }: { waypoint: DraftWaypointInput | null; enabled?: boolean }): null {
   const map = useMap();
 
   useEffect(() => {
+    if (!enabled) return;
     if (!waypoint) return;
 
     const target: [number, number] = [waypoint.lat, waypoint.lng];
     map.panTo(target, { animate: true, duration: 0.35 });
-  }, [map, waypoint, waypoint?.lat, waypoint?.lng]);
+  }, [enabled, map, waypoint, waypoint?.lat, waypoint?.lng]);
 
   return null;
 }
 
 function TrackMapViewport({
   onViewportChange,
+  onUserInteraction,
 }: {
   onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
+  onUserInteraction: () => void;
 }): null {
   const map = useMap();
 
@@ -307,6 +314,21 @@ function TrackMapViewport({
       map.off("zoomend", reportViewport);
     };
   }, [map, onViewportChange]);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const reportInteraction = () => onUserInteraction();
+
+    container.addEventListener("wheel", reportInteraction, { passive: true });
+    container.addEventListener("mousedown", reportInteraction);
+    container.addEventListener("touchstart", reportInteraction, { passive: true });
+
+    return () => {
+      container.removeEventListener("wheel", reportInteraction);
+      container.removeEventListener("mousedown", reportInteraction);
+      container.removeEventListener("touchstart", reportInteraction);
+    };
+  }, [map, onUserInteraction]);
 
   return null;
 }
@@ -545,6 +567,7 @@ export function CreateQuizPage(): JSX.Element {
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
+  const [routeMapViewportUserControlled, setRouteMapViewportUserControlled] = useState(false);
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
@@ -554,6 +577,8 @@ export function CreateQuizPage(): JSX.Element {
   const [aiPasswordDraft, setAiPasswordDraft] = useState("");
   const [aiPasswordShake, setAiPasswordShake] = useState(false);
   const [aiTopic, setAiTopic] = useState("");
+  const [aiTopicCategory, setAiTopicCategory] = useState<AiTopicCategory>("history");
+  const [aiFreePrompt, setAiFreePrompt] = useState("");
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("medium");
   const [aiQuestionType, setAiQuestionType] = useState<QuestionType>("multiple_choice");
   const [aiLanguage, setAiLanguage] = useState<AiLanguage>("sv");
@@ -564,6 +589,7 @@ export function CreateQuizPage(): JSX.Element {
   const [aiLoadingLabelIndex, setAiLoadingLabelIndex] = useState(0);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiPreviewQuestion, setAiPreviewQuestion] = useState<DraftQuestionInput | null>(null);
+  const [aiPreviewSourceVerified, setAiPreviewSourceVerified] = useState(true);
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -576,12 +602,12 @@ export function CreateQuizPage(): JSX.Element {
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
   const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
 
+  const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
   const shareLink = useMemo(() => {
     if (!result) return "";
-    return buildPlayShareLink(result.quizId);
-  }, [result]);
-
-  const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
+    const playValue = !input.isPublic && editingQuizStatus === "published" && displayedAccessCode ? displayedAccessCode : result.quizId;
+    return buildPlayShareLink(playValue);
+  }, [displayedAccessCode, editingQuizStatus, input.isPublic, result]);
   const aiPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
   const aiPasswordConfigured = aiPassword.length > 0;
 
@@ -628,7 +654,7 @@ export function CreateQuizPage(): JSX.Element {
   function openAiGenerator(): void {
     setAiError(null);
     setAiPreviewQuestion(null);
-    setAiTopic("");
+    setAiPreviewSourceVerified(true);
     setAiQuestionType(currentQuestion?.questionType ?? "multiple_choice");
     setAiLanguage(input.locale === "sv" ? "sv" : "en");
     if (!aiUnlocked) {
@@ -639,12 +665,19 @@ export function CreateQuizPage(): JSX.Element {
     void refreshAiTokenBalance();
   }
 
-  function submitAiUnlock(): void {
+  async function submitAiUnlock(): Promise<void> {
     if (!aiPasswordConfigured) {
       setAiError(t("creator.questions.aiErrorApiKeyMissing"));
       return;
     }
     if (aiPasswordDraft === aiPassword) {
+      try {
+        const seeded = await seedAiAdminPreviewTokens(9999);
+        setAiTokenBalance(seeded.aiTokens);
+      } catch {
+        setAiError(t("creator.questions.aiErrorTokenUpdate"));
+        return;
+      }
       localStorage.setItem(AI_UNLOCK_STORAGE_KEY, "true");
       setAiUnlocked(true);
       setAiUnlockModalOpen(false);
@@ -674,9 +707,12 @@ export function CreateQuizPage(): JSX.Element {
 
     setAiLoading(true);
     setAiPreviewQuestion(null);
+    setAiPreviewSourceVerified(true);
     try {
       const response = await generateAiQuestion({
         topic,
+        topicCategory: aiTopicCategory,
+        freePrompt: aiFreePrompt.trim() || undefined,
         difficulty: aiDifficulty,
         questionType: aiQuestionType,
         language: aiLanguage,
@@ -702,6 +738,7 @@ export function CreateQuizPage(): JSX.Element {
       }
 
       setAiPreviewQuestion(previewQuestion);
+      setAiPreviewSourceVerified(response.sourceVerified);
     } catch (error) {
       setAiError(t(mapAiErrorToI18nKey(error)));
     } finally {
@@ -1037,6 +1074,11 @@ export function CreateQuizPage(): JSX.Element {
 
   function addWaypoint(): void {
     addWaypointAt();
+  }
+
+  function fitRouteMapToScreen(): void {
+    setRouteMapViewportUserControlled(false);
+    setRouteMapViewport(null);
   }
 
   function handleRouteMapClick(lat: number, lng: number): void {
@@ -2218,7 +2260,12 @@ export function CreateQuizPage(): JSX.Element {
               {currentWaypoint ? (
                 <Card withBorder radius="md" p="sm">
                   <Stack gap="xs" className="kwiz-creator-map-shell">
-                    <Text size="sm" fw={600}>{t("creator.route.mapHint")}</Text>
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Text size="sm" fw={600}>{t("creator.route.mapHint")}</Text>
+                      <Button size="xs" variant="light" onClick={fitRouteMapToScreen}>
+                        {t("creator.route.fitScreen")}
+                      </Button>
+                    </Group>
                     {addMultipleWaypointsMode ? (
                       <Badge color="orange" variant="light" className="kwiz-align-self-start">
                         {t("creator.route.addMultipleWaypointsActive")}
@@ -2274,7 +2321,9 @@ export function CreateQuizPage(): JSX.Element {
                       drawingLegPoints={drawingLegPoints}
                       mapHeightClassName={routeMapHeightClassName}
                       viewport={routeMapViewport}
+                      userViewportControlled={routeMapViewportUserControlled}
                       onViewportChange={setRouteMapViewport}
+                      onUserViewportControl={() => setRouteMapViewportUserControlled(true)}
                       onChange={handleRouteMapClick}
                       onDrawPointAdd={addManualLegPoint}
                     />
@@ -3127,7 +3176,7 @@ export function CreateQuizPage(): JSX.Element {
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  submitAiUnlock();
+                  void submitAiUnlock();
                 }
               }}
             />
@@ -3135,7 +3184,7 @@ export function CreateQuizPage(): JSX.Element {
               <Button variant="default" onClick={() => setAiUnlockModalOpen(false)}>
                 {t("common.cancel")}
               </Button>
-              <Button onClick={submitAiUnlock}>{t("creator.questions.aiUnlockAction")}</Button>
+              <Button onClick={() => void submitAiUnlock()}>{t("creator.questions.aiUnlockAction")}</Button>
             </Group>
           </Stack>
         </Modal>
@@ -3162,6 +3211,37 @@ export function CreateQuizPage(): JSX.Element {
               placeholder={t("creator.questions.aiTopicPlaceholder")}
               value={aiTopic}
               onChange={(event) => setAiTopic(event.currentTarget.value)}
+            />
+
+            <Select
+              label={t("creator.questions.aiTopicCategory")}
+              value={aiTopicCategory}
+              data={[
+                { value: "history", label: t("creator.questions.aiTopicCategoryHistory") },
+                { value: "music", label: t("creator.questions.aiTopicCategoryMusic") },
+                { value: "sports", label: t("creator.questions.aiTopicCategorySports") },
+                { value: "climate", label: t("creator.questions.aiTopicCategoryClimate") },
+                { value: "science", label: t("creator.questions.aiTopicCategoryScience") },
+                { value: "geography", label: t("creator.questions.aiTopicCategoryGeography") },
+                { value: "culture", label: t("creator.questions.aiTopicCategoryCulture") },
+                { value: "politics", label: t("creator.questions.aiTopicCategoryPolitics") },
+                { value: "nature", label: t("creator.questions.aiTopicCategoryNature") },
+                { value: "technology", label: t("creator.questions.aiTopicCategoryTechnology") },
+                { value: "food", label: t("creator.questions.aiTopicCategoryFood") },
+                { value: "art", label: t("creator.questions.aiTopicCategoryArt") },
+                { value: "custom", label: t("creator.questions.aiTopicCategoryCustom") },
+              ]}
+              onChange={(value) => setAiTopicCategory((value ?? "history") as AiTopicCategory)}
+            />
+
+            <Textarea
+              label={t("creator.questions.aiFreePrompt")}
+              placeholder={t("creator.questions.aiFreePromptPlaceholder")}
+              maxLength={300}
+              minRows={2}
+              autosize
+              value={aiFreePrompt}
+              onChange={(event) => setAiFreePrompt(event.currentTarget.value)}
             />
 
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
@@ -3234,6 +3314,11 @@ export function CreateQuizPage(): JSX.Element {
             {aiPreviewQuestion ? (
               <Card withBorder radius="md" p="sm">
                 <Stack gap="xs">
+                  {!aiPreviewSourceVerified ? (
+                    <Alert color="yellow" icon={<IconAlertCircle size={16} />}>
+                      {t("creator.questions.aiSourceNotVerified")}
+                    </Alert>
+                  ) : null}
                   <Text fw={600}>{aiPreviewQuestion.text}</Text>
                   {aiPreviewQuestion.questionType === "multiple_choice" ? (
                     <Stack gap={4}>
@@ -3249,6 +3334,16 @@ export function CreateQuizPage(): JSX.Element {
                   ) : null}
                   {aiPreviewQuestion.questionType === "letter_order" ? (
                     <Text size="sm">{`${t("creator.questions.letterOrderAnswer")}: ${aiPreviewQuestion.letterOrderAnswer ?? ""}`}</Text>
+                  ) : null}
+                  {aiPreviewQuestion.sourceUrl ? (
+                    <Group gap={6}>
+                      <Text size="sm" c="dimmed">
+                        {t("creator.questions.aiSource")}
+                      </Text>
+                      <Anchor href={aiPreviewQuestion.sourceUrl} target="_blank" rel="noopener noreferrer" size="sm">
+                        {t("creator.questions.aiOpenSource")}
+                      </Anchor>
+                    </Group>
                   ) : null}
                 </Stack>
               </Card>

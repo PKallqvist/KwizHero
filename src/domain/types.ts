@@ -32,6 +32,7 @@ export interface DraftQuestionInput {
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
   funFact?: string;
+  sourceUrl?: string;
   config: QuestionConfig;
 }
 
@@ -116,6 +117,7 @@ export interface QuizWalkQuestion {
   questionType: QuestionType;
   text: string;
   funFact?: string;
+  sourceUrl?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;
@@ -154,6 +156,7 @@ export interface WaypointQuestion {
   questionType: QuestionType;
   text: string;
   funFact?: string;
+  sourceUrl?: string;
   choices: QuestionChoice[];
   pointsIfCorrect: number;
   config: QuestionConfig;

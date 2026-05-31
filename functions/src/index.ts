@@ -13,9 +13,25 @@ function sha256Hex(value: string): string {
 type AiDifficulty = "easy" | "medium" | "hard";
 type AiLanguage = "sv" | "en";
 type QuestionType = "multiple_choice" | "numeric" | "letter_order";
+type AiTopicCategory =
+  | "history"
+  | "music"
+  | "sports"
+  | "climate"
+  | "science"
+  | "geography"
+  | "culture"
+  | "politics"
+  | "nature"
+  | "technology"
+  | "food"
+  | "art"
+  | "custom";
 
 interface AiQuestionGeneratorRequest {
   topic?: unknown;
+  topicCategory?: unknown;
+  freePrompt?: unknown;
   difficulty?: unknown;
   questionType?: unknown;
   language?: unknown;
@@ -34,6 +50,8 @@ interface AiQuestionGeneratorResponse {
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
   funFact: string;
+  sourceUrl: string;
+  sourceVerified: boolean;
 }
 
 function stripJsonFences(value: string): string {
@@ -57,13 +75,106 @@ function assertAllowedQuestionType(value: unknown): QuestionType {
   throw new HttpsError("invalid-argument", "questionType must be multiple_choice, numeric, or letter_order");
 }
 
+function assertAllowedTopicCategory(value: unknown): AiTopicCategory {
+  const categories: AiTopicCategory[] = [
+    "history",
+    "music",
+    "sports",
+    "climate",
+    "science",
+    "geography",
+    "culture",
+    "politics",
+    "nature",
+    "technology",
+    "food",
+    "art",
+    "custom",
+  ];
+  if (typeof value === "string" && categories.includes(value as AiTopicCategory)) {
+    return value as AiTopicCategory;
+  }
+  throw new HttpsError("invalid-argument", "topicCategory is invalid");
+}
+
 function normalizePositiveInteger(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.floor(value));
 }
 
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isSearchResultsUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+
+    if ((host.includes("google.") && path.startsWith("/search")) ||
+      (host.includes("bing.com") && path.startsWith("/search")) ||
+      (host.includes("duckduckgo.com") && path === "/") ||
+      (host.includes("search.yahoo.com") && path.startsWith("/search"))) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function isSourceUrlReachable(url: string): Promise<boolean> {
+  const methods: Array<"HEAD" | "GET"> = ["HEAD", "GET"];
+
+  for (const method of methods) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(url, {
+        method,
+        redirect: "follow",
+        signal: controller.signal,
+      });
+
+      if (response.status >= 200 && response.status < 400) {
+        return true;
+      }
+
+      if (method === "HEAD" && (response.status === 405 || response.status === 501)) {
+        continue;
+      }
+    } catch {
+      // Try GET after HEAD failures or transient network issues.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return false;
+}
+
+async function evaluateSourceVerification(sourceUrl: string): Promise<boolean> {
+  if (!isValidHttpUrl(sourceUrl)) {
+    return false;
+  }
+  if (isSearchResultsUrl(sourceUrl)) {
+    return false;
+  }
+  return isSourceUrlReachable(sourceUrl);
+}
+
 function buildPrompt(input: {
   topic: string;
+  topicCategory: AiTopicCategory;
+  freePrompt: string;
   difficulty: AiDifficulty;
   questionType: QuestionType;
   language: AiLanguage;
@@ -78,7 +189,7 @@ function buildPrompt(input: {
         ? "For numeric:\n- Set choices to []\n- Set numericAnswer to the one correct number"
         : "For letter_order:\n- Set choices to []\n- Set letterOrderAnswer to the one correct short text answer";
 
-  return `Generate a quiz question about: "${input.topic}"\nDifficulty: ${input.difficulty}\nQuestion type: ${input.questionType}\nLanguage: ${languageLabel}\n\nRespond with valid JSON only, using this exact shape:\n{\n  "question": "Question text",\n  "choices": [{ "text": "Choice", "correct": false }],\n  "numericAnswer": null,\n  "letterOrderAnswer": null,\n  "funFact": "Short interesting fact"\n}\n\nRules:\n- No markdown, no code fences\n- Exactly one field among numericAnswer/letterOrderAnswer should be used for non-multiple_choice types\n- Keep facts accurate and specific\n- Use the requested language\n${answerShapeInstructions}`;
+  return `Generate a quiz question about: "${input.topic}"\nTopic category: ${input.topicCategory}\nAdditional request: "${input.freePrompt || "none"}"\nDifficulty: ${input.difficulty}\nQuestion type: ${input.questionType}\nLanguage: ${languageLabel}\n\nRespond with valid JSON only, using this exact shape:\n{\n  "question": "Question text",\n  "choices": [{ "text": "Choice", "correct": false }],\n  "numericAnswer": null,\n  "letterOrderAnswer": null,\n  "funFact": "Short interesting fact",\n  "sourceUrl": "https://..."\n}\n\nRules:\n- No markdown, no code fences\n- Exactly one field among numericAnswer/letterOrderAnswer should be used for non-multiple_choice types\n- Keep facts accurate and specific\n- sourceUrl must be a direct http/https page that supports the fact or answer\n- sourceUrl must be a real article/page URL, not a search results URL\n- Use the requested language\n${answerShapeInstructions}`;
 }
 
 function parseAndValidateResponse(rawText: string, expected: {
@@ -103,10 +214,12 @@ function parseAndValidateResponse(rawText: string, expected: {
     numericAnswer?: unknown;
     letterOrderAnswer?: unknown;
     funFact?: unknown;
+    sourceUrl?: unknown;
   };
 
   const question = typeof candidate.question === "string" ? candidate.question.trim() : "";
   const funFact = typeof candidate.funFact === "string" ? candidate.funFact.trim() : "";
+  const sourceUrl = typeof candidate.sourceUrl === "string" ? candidate.sourceUrl.trim() : "";
   if (question.length < 4 || funFact.length < 4) {
     throw new HttpsError("invalid-argument", "invalid-json-from-openai");
   }
@@ -134,6 +247,8 @@ function parseAndValidateResponse(rawText: string, expected: {
       numericAnswer: null,
       letterOrderAnswer: null,
       funFact,
+      sourceUrl,
+      sourceVerified: false,
     };
   }
 
@@ -153,6 +268,8 @@ function parseAndValidateResponse(rawText: string, expected: {
       numericAnswer,
       letterOrderAnswer: null,
       funFact,
+      sourceUrl,
+      sourceVerified: false,
     };
   }
 
@@ -172,11 +289,15 @@ function parseAndValidateResponse(rawText: string, expected: {
     numericAnswer: null,
     letterOrderAnswer,
     funFact,
+    sourceUrl,
+    sourceVerified: false,
   };
 }
 
 async function callOpenAi(input: {
   topic: string;
+  topicCategory: AiTopicCategory;
+  freePrompt: string;
   difficulty: AiDifficulty;
   questionType: QuestionType;
   language: AiLanguage;
@@ -228,13 +349,18 @@ async function callOpenAi(input: {
   return content;
 }
 
-export const generateAiQuestionCallable = onCall(async (request) => {
+export const generateAiQuestionCallable = onCall({ invoker: "public" }, async (request) => {
   const data = (request.data ?? {}) as AiQuestionGeneratorRequest;
   const topic = typeof data.topic === "string" ? data.topic.trim() : "";
+  const freePrompt = typeof data.freePrompt === "string" ? data.freePrompt.trim() : "";
   if (topic.length < 2) {
     throw new HttpsError("invalid-argument", "topic is required");
   }
+  if (freePrompt.length > 300) {
+    throw new HttpsError("invalid-argument", "freePrompt must be 300 characters or less");
+  }
 
+  const topicCategory = assertAllowedTopicCategory(data.topicCategory);
   const difficulty = assertAllowedDifficulty(data.difficulty);
   const questionType = assertAllowedQuestionType(data.questionType);
   const language = assertAllowedLanguage(data.language);
@@ -252,6 +378,8 @@ export const generateAiQuestionCallable = onCall(async (request) => {
 
   const rawContent = await callOpenAi({
     topic,
+    topicCategory,
+    freePrompt,
     difficulty,
     questionType,
     language,
@@ -259,14 +387,21 @@ export const generateAiQuestionCallable = onCall(async (request) => {
     correctAnswerCount,
   });
 
-  return parseAndValidateResponse(rawContent, {
+  const parsedResponse = parseAndValidateResponse(rawContent, {
     questionType,
     choiceCount,
     correctAnswerCount,
   });
+
+  const sourceVerified = await evaluateSourceVerification(parsedResponse.sourceUrl);
+
+  return {
+    ...parsedResponse,
+    sourceVerified,
+  };
 });
 
-export const publishQuizCallable = onCall(async (request) => {
+export const publishQuizCallable = onCall({ invoker: "public" }, async (request) => {
   const quizId = String(request.data?.quizId ?? "").trim();
   const editKey = String(request.data?.editKey ?? "").trim();
 

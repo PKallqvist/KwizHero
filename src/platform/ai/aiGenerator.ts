@@ -4,9 +4,25 @@ import type { QuestionType } from "../../domain/types";
 
 export type AiDifficulty = "easy" | "medium" | "hard";
 export type AiLanguage = "sv" | "en";
+export type AiTopicCategory =
+  | "history"
+  | "music"
+  | "sports"
+  | "climate"
+  | "science"
+  | "geography"
+  | "culture"
+  | "politics"
+  | "nature"
+  | "technology"
+  | "food"
+  | "art"
+  | "custom";
 
 export interface AiQuestionGeneratorRequest {
   topic: string;
+  topicCategory: AiTopicCategory;
+  freePrompt?: string;
   difficulty: AiDifficulty;
   questionType: QuestionType;
   language: AiLanguage;
@@ -25,6 +41,8 @@ export interface AiQuestionGeneratorResponse {
   numericAnswer: number | null;
   letterOrderAnswer: string | null;
   funFact: string;
+  sourceUrl: string;
+  sourceVerified: boolean;
 }
 
 export async function generateAiQuestion(

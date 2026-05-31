@@ -140,7 +140,7 @@ export function UserQuizzesPage(): JSX.Element {
 
   const rows = useMemo(() => {
     return quizzes.map((quiz) => {
-      const playValue = !quiz.isPublic && quiz.accessCode ? quiz.accessCode : quiz.id;
+      const playValue = !quiz.isPublic && quiz.status === "published" && quiz.accessCode ? quiz.accessCode : quiz.id;
       const shareLink = buildPlayShareLink(playValue);
       const copied = clipboard.copied && lastCopiedQuizId === quiz.id;
       const canEdit = quiz.status === "draft";

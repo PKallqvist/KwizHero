@@ -20,6 +20,10 @@ describe("mapAiErrorToI18nKey", () => {
     expect(mapAiErrorToI18nKey({ code: "invalid-argument" })).toBe("creator.questions.aiErrorInvalidJson");
   });
 
+  it("maps unreachable source errors", () => {
+    expect(mapAiErrorToI18nKey({ message: "source-url-unreachable" })).toBe("creator.questions.aiErrorSourceUnreachable");
+  });
+
   it("falls back to network error", () => {
     expect(mapAiErrorToI18nKey({})).toBe("creator.questions.aiErrorNetwork");
   });
@@ -33,6 +37,8 @@ describe("buildDraftQuestionFromAiResponse", () => {
       numericAnswer: 42,
       letterOrderAnswer: null,
       funFact: "A fun number",
+      sourceUrl: "https://example.com/fun-number",
+      sourceVerified: true,
     };
 
     const draft = buildDraftQuestionFromAiResponse({
@@ -45,6 +51,7 @@ describe("buildDraftQuestionFromAiResponse", () => {
     expect(draft.numericAnswer).toBe(42);
     expect(draft.choices).toEqual([]);
     expect(draft.funFact).toBe("A fun number");
+    expect(draft.sourceUrl).toBe("https://example.com/fun-number");
   });
 
   it("maps letter-order response", () => {
@@ -54,6 +61,8 @@ describe("buildDraftQuestionFromAiResponse", () => {
       numericAnswer: null,
       letterOrderAnswer: "ABC",
       funFact: "Alphabet fun",
+      sourceUrl: "https://example.com/alphabet",
+      sourceVerified: true,
     };
 
     const draft = buildDraftQuestionFromAiResponse({
@@ -79,6 +88,8 @@ describe("buildDraftQuestionFromAiResponse", () => {
       numericAnswer: null,
       letterOrderAnswer: null,
       funFact: "Planets orbit stars",
+      sourceUrl: "https://example.com/planets",
+      sourceVerified: true,
     };
 
     const draft = buildDraftQuestionFromAiResponse({
