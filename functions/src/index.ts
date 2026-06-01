@@ -320,7 +320,7 @@ async function callOpenAi(input: {
     },
     body: JSON.stringify({
       model: "gpt-4o-mini",
-      temperature: 1.1,
+      temperature: 0.7,
       messages: [
         {
           role: "system",
