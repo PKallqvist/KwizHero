@@ -327,7 +327,7 @@ async function callAnthropic(input: AiCallInput): Promise<string> {
   let response: Anthropic.Message;
   try {
     response = await client.messages.create({
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: 4096,
       system: "You are a high-quality quiz question generator for KwizHero. Always respond with valid JSON only. No preamble, no explanation, no markdown code fences.",
       messages: [
