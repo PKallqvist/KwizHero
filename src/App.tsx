@@ -95,7 +95,7 @@ function BottomBarAndDrawer(): JSX.Element {
           onClick={() => setDrawerOpen(true)}
           aria-label={t("player.menu")}
         >
-          <IconMenu2 size={18} color="white" />
+          <IconMenu2 size={18} />
         </button>
       </div>
 

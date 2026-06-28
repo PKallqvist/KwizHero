@@ -24,7 +24,6 @@ import {
   SegmentedControl,
   SimpleGrid,
   Stack,
-  Stepper,
   Text,
   TextInput,
   Textarea,
@@ -502,6 +501,57 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
   return null;
 }
 
+function CompactStepper(props: {
+  step: number;
+  labels: string[];
+  onStepClick?: (step: number) => void;
+}): JSX.Element {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const scroll = (dir: number) => trackRef.current?.scrollBy({ left: dir * 120, behavior: "smooth" });
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [props.step]);
+
+  return (
+    <div className="kwiz-stepper-wrap">
+      <button type="button" className="kwiz-stepper-arrow is-left" onClick={() => scroll(-1)} aria-label="Scroll left">
+        <IconChevronLeft size={14} />
+      </button>
+      <div className="kwiz-stepper-track" ref={trackRef}>
+        {props.labels.map((label, i) => {
+          const stepNum = i + 1;
+          const done = stepNum < props.step;
+          const active = stepNum === props.step;
+          const circleClass = `kwiz-stepper-circle ${done ? "is-done" : active ? "is-active" : "is-todo"}`;
+          const labelClass = `kwiz-stepper-label ${done ? "is-done" : active ? "is-active" : "is-todo"}`;
+          return (
+            <Fragment key={stepNum}>
+              {i > 0 && <span className="kwiz-stepper-connector" />}
+              <button
+                type="button"
+                className="kwiz-stepper-item"
+                ref={active ? activeRef : undefined}
+                onClick={props.onStepClick ? () => props.onStepClick!(stepNum) : undefined}
+                disabled={!props.onStepClick}
+              >
+                <span className={circleClass}>
+                  {done ? <IconCircleCheck size={18} /> : stepNum}
+                </span>
+                <span className={labelClass}>{label}</span>
+              </button>
+            </Fragment>
+          );
+        })}
+      </div>
+      <button type="button" className="kwiz-stepper-arrow is-right" onClick={() => scroll(1)} aria-label="Scroll right">
+        <IconChevronRight size={14} />
+      </button>
+    </div>
+  );
+}
+
 export function CreateQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
   const [searchParams] = useSearchParams();
@@ -568,6 +618,7 @@ export function CreateQuizPage(): JSX.Element {
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
   const [routeMapViewportUserControlled, setRouteMapViewportUserControlled] = useState(false);
+  const geolocatedOnce = useRef(false);
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
@@ -1088,24 +1139,6 @@ export function CreateQuizPage(): JSX.Element {
     setSelectedQuestionIndex(0);
   }
 
-  function addQuestionToCurrentWaypoint(): void {
-    if (!currentWaypoint) return;
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    updateCurrentWaypoint({
-      ...currentWaypoint,
-      questions: [...currentWaypoint.questions, createDefaultQuestion()],
-    });
-    setSelectedQuestionIndex(currentWaypoint.questions.length);
-  }
-
-  function removeCurrentQuestion(): void {
-    if (!currentWaypoint || currentWaypoint.questions.length === 0) return;
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    const nextQuestions = currentWaypoint.questions.filter((_, i) => i !== selectedQuestionIndex);
-    updateCurrentWaypoint({ ...currentWaypoint, questions: nextQuestions });
-    setSelectedQuestionIndex(nextQuestions.length === 0 ? 0 : Math.max(0, selectedQuestionIndex - 1));
-  }
-
   function moveCurrentQuestionByStep(direction: -1 | 1): void {
     if (!currentQuestion) return;
     if (currentQuestionPositionIndex < 0) return;
@@ -1287,7 +1320,6 @@ export function CreateQuizPage(): JSX.Element {
     });
   }
 
-  const questionCountInCurrentWaypoint = currentWaypoint?.questions.length ?? 0;
   const questionPositions = useMemo(
     () =>
       input.waypoints.flatMap((waypoint, waypointIndex) =>
@@ -1304,14 +1336,6 @@ export function CreateQuizPage(): JSX.Element {
   const hasNextQuestion =
     currentQuestionPositionIndex >= 0 &&
     currentQuestionPositionIndex < questionPositions.length - 1;
-  const currentQuestionGlobalNumber = input.waypoints
-    .slice(0, selectedWaypointIndex)
-    .reduce((sum, waypoint) => sum + waypoint.questions.length, 0) +
-    selectedQuestionIndex +
-    1;
-  const currentQuestionOrdinal =
-    questionCountInCurrentWaypoint > 1 ? ` (${selectedQuestionIndex + 1}/${questionCountInCurrentWaypoint})` : "";
-
   function getQuestionGlobalNumber(questionIndex: number): number {
     return (
       input.waypoints.slice(0, selectedWaypointIndex).reduce((sum, waypoint) => sum + waypoint.questions.length, 0) +
@@ -1346,6 +1370,12 @@ export function CreateQuizPage(): JSX.Element {
     setCoordinatesOverlayOpen(false);
     setSelectedWaypointIndex(index);
     setSelectedQuestionIndex(0);
+    const wp = input.waypoints[index];
+    if (wp && wp.questions.length === 0) {
+      const waypoints = [...input.waypoints];
+      waypoints[index] = { ...wp, questions: [createDefaultQuestion()] };
+      setInput((prev) => ({ ...prev, waypoints }));
+    }
   }
 
   function beginManualLegDrawing(legIndex: number): void {
@@ -1528,6 +1558,26 @@ export function CreateQuizPage(): JSX.Element {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [cancelManualLegDrawing, drawingLegIndex, finishManualLegDrawing, step, drawingLegPoints.length, input.waypoints.length, undoManualLegPoint]);
+
+  useEffect(() => {
+    if (step !== 3 || geolocatedOnce.current || isEditingExistingQuiz) return;
+    geolocatedOnce.current = true;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        setRouteMapViewport({ lat, lng, zoom: 15 });
+        setInput((prev) => {
+          const first = prev.waypoints[0];
+          if (!first || (first.lat !== 0 && first.lng !== 0)) return prev;
+          const waypoints = [...prev.waypoints];
+          waypoints[0] = { ...first, lat, lng };
+          return { ...prev, waypoints };
+        });
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  }, [step, isEditingExistingQuiz]);
 
   const hasWaypointData =
     input.waypoints.length > 0 && input.waypoints.every((w) => w.name.trim().length > 0);
@@ -1756,7 +1806,13 @@ export function CreateQuizPage(): JSX.Element {
       <Stack gap="md">
         <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
-        <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}</Text>
+        <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}: {[
+          t("creator.steps.identity"),
+          t("creator.steps.rules"),
+          t("creator.steps.route"),
+          t("creator.steps.questions"),
+          t("creator.steps.publish"),
+        ][step - 1]}</Text>
         {isEditingExistingQuiz ? (
           <Alert icon={<IconAlertCircle size={16} />} color="blue" variant="light">
             <Stack gap={4}>
@@ -1774,20 +1830,19 @@ export function CreateQuizPage(): JSX.Element {
           </Alert>
         ) : null}
 
-        <Stepper
-          active={step - 1}
+        <CompactStepper
+          step={step}
+          labels={[
+            t("creator.steps.identity"),
+            t("creator.steps.rules"),
+            t("creator.steps.route"),
+            t("creator.steps.questions"),
+            t("creator.steps.publish"),
+          ]}
           onStepClick={(n) => {
-            if (!isEditingExistingQuiz) return;
-            setStep((n + 1) as WizardStep);
+            if (n < step || isEditingExistingQuiz) setStep(n as WizardStep);
           }}
-          allowNextStepsSelect={isEditingExistingQuiz}
-        >
-          <Stepper.Step label={t("creator.steps.identity")} />
-          <Stepper.Step label={t("creator.steps.rules")} />
-          <Stepper.Step label={t("creator.steps.route")} />
-          <Stepper.Step label={t("creator.steps.questions")} />
-          <Stepper.Step label={t("creator.steps.publish")} />
-        </Stepper>
+        />
 
         {step === 1 ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
@@ -2149,6 +2204,7 @@ export function CreateQuizPage(): JSX.Element {
             >
               <Group
                 wrap={isMobilePreviewLayout ? "nowrap" : "wrap"}
+                gap={6}
                 className={`kwiz-creator-waypoint-row${isMobilePreviewLayout ? " kwiz-creator-waypoint-row-scroll" : ""}`}
               >
                 {input.waypoints.map((waypoint, index) => {
@@ -2158,17 +2214,16 @@ export function CreateQuizPage(): JSX.Element {
                   const color = questionCount === 0 ? "gray" : invalidCount > 0 ? "orange" : "teal";
 
                   return (
-                    <Button
-                      key={`waypoint-question-tab-${index}`}
-                      variant={isActive ? "filled" : "light"}
-                      color={color}
-                      size="xs"
-                      onClick={() => {
-                        selectWaypoint(index);
-                      }}
+                    <button
+                      key={`waypoint-dot-${index}`}
+                      type="button"
+                      className={`kwiz-waypoint-dot${isActive ? " is-active" : ""}`}
+                      data-color={color}
+                      onClick={() => selectWaypoint(index)}
+                      title={`${waypoint.name} (${questionCount})`}
                     >
-                      {`${index + 1}. ${waypoint.name} (${questionCount})`}
-                    </Button>
+                      {index + 1}
+                    </button>
                   );
                 })}
               </Group>
@@ -2326,82 +2381,10 @@ export function CreateQuizPage(): JSX.Element {
                 </Card>
               ) : null}
             </Stack>
-            ) : (
-            <Card withBorder radius="md" p="sm">
-              <Stack gap="sm">
-                {currentWaypoint ? (
-                  <>
-                    <Group justify="space-between" align="center" wrap="nowrap">
-                      <Text size="sm" fw={600}>{`Stop: ${currentWaypoint.name}`}</Text>
-                      <Group gap="xs" wrap="nowrap">
-                        <Button
-                          size="xs"
-                          variant="light"
-                          leftSection={<IconSparkles size={14} />}
-                          onClick={openAiGenerator}
-                        >
-                          {t("creator.questions.generateWithAi")}
-                        </Button>
-                        <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={addQuestionToCurrentWaypoint}>
-                          {t("creator.questions.addCard")}
-                        </Button>
-                      </Group>
-                    </Group>
-
-                    {currentWaypoint.questions.length === 0 ? (
-                      <Card withBorder radius="md" p="md">
-                        <Stack align="center" gap="xs">
-                          <Text size="sm" c="dimmed">This waypoint has no cards yet.</Text>
-                          <Button leftSection={<IconPlus size={16} />} onClick={addQuestionToCurrentWaypoint}>
-                            {t("creator.questions.addCard")}
-                          </Button>
-                        </Stack>
-                      </Card>
-                    ) : (
-                      <Stack gap="xs">
-                        {currentWaypoint.questions.map((question, index) => {
-                          const isActive = selectedQuestionIndex === index;
-                          const valid = isQuestionValid(question);
-                          return (
-                            <Button
-                              key={`question-list-item-${index}`}
-                              variant={isActive ? "filled" : "light"}
-                              color={valid ? "teal" : "orange"}
-                              justify="space-between"
-                              onClick={() => selectQuestion(index)}
-                            >
-                              {`Q${getQuestionGlobalNumber(index)} ${question.text.trim().length > 0 ? `- ${question.text.slice(0, 38)}` : `- ${t("creator.questions.untitledQuestion")}`}`}
-                            </Button>
-                          );
-                        })}
-                      </Stack>
-                    )}
-                  </>
-                ) : (
-                  <Text size="sm" c="dimmed">Select a waypoint to manage questions.</Text>
-                )}
-              </Stack>
-            </Card>
-            )}
+            ) : null}
 
             {step === 4 ? (
             <Stack gap="md">
-              {currentWaypoint ? (
-                <Stack gap="sm">
-
-                  {currentWaypoint.questions.length === 0 ? (
-                    <Card withBorder radius="md" p="xl">
-                      <Stack align="center" justify="center" gap="md" className="kwiz-creator-empty-waypoint">
-                        <Text size="sm" c="dimmed">This waypoint has no cards yet.</Text>
-                        <Button leftSection={<IconPlus size={16} />} onClick={addQuestionToCurrentWaypoint}>
-                          {t("creator.questions.addCard")}
-                        </Button>
-                      </Stack>
-                    </Card>
-                  ) : null}
-                </Stack>
-              ) : null}
-
               {currentQuestion ? (
                 <>
                   <Card
@@ -2412,117 +2395,23 @@ export function CreateQuizPage(): JSX.Element {
                   >
                     <Stack gap="sm">
                       <Group justify="space-between" align="center" wrap="nowrap">
-                        <Text size="sm" fw={600}>
-                          {t("creator.questions.previewQuestionWithWaypoint", {
-                            number: currentQuestionGlobalNumber,
-                            waypointName: currentWaypoint.name,
-                            questionOrdinal: currentQuestionOrdinal,
-                          })}
-                        </Text>
-                        <Group gap={6} wrap="nowrap" align="center">
-                          <Text size="xs" c="dimmed">{t("creator.questions.reorderShort")}</Text>
-                          {questionPreviewActive ? (
-                            <Button size="compact-xs" variant="light" color="gray" onClick={exitQuestionPreview}>
-                              {t("creator.questions.previewExit")}
-                            </Button>
-                          ) : (
-                            <Button
-                              size="compact-xs"
-                              variant="light"
-                              color="teal"
-                              onClick={enterQuestionPreview}
-                              disabled={!currentQuestion}
-                            >
-                              {t("creator.questions.previewStart")}
-                            </Button>
-                          )}
-                          <ActionIcon
-                            variant="subtle"
-                            color="teal"
-                            onClick={addQuestionToCurrentWaypoint}
-                            aria-label={t("creator.questions.addCard")}
-                            title={t("creator.questions.addCard")}
-                          >
-                            <IconPlus size={14} />
-                          </ActionIcon>
+                        <Text size="sm" fw={600}>{currentWaypoint.name}</Text>
+                        {questionPreviewActive ? (
+                          <Button size="compact-xs" variant="light" color="gray" onClick={exitQuestionPreview}>
+                            {t("creator.questions.previewExit")}
+                          </Button>
+                        ) : (
                           <Button
                             size="compact-xs"
                             variant="light"
-                            leftSection={<IconSparkles size={12} />}
-                            onClick={openAiGenerator}
+                            color="teal"
+                            onClick={enterQuestionPreview}
+                            disabled={!currentQuestion}
                           >
-                            {t("creator.questions.generateWithAi")}
+                            {t("creator.questions.previewStart")}
                           </Button>
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            onClick={removeCurrentQuestion}
-                            disabled={currentWaypoint.questions.length === 0}
-                            aria-label={t("creator.questions.removeQuestion")}
-                            title={t("creator.questions.removeQuestion")}
-                          >
-                            <IconTrash size={14} />
-                          </ActionIcon>
-                          <Button
-                            size="compact-xs"
-                            variant="subtle"
-                            color="gray"
-                            onClick={() => moveCurrentQuestionByStep(-1)}
-                            disabled={!hasPreviousQuestion}
-                            leftSection={<IconChevronLeft size={12} />}
-                            title={t("creator.questions.moveQuestionToPreviousWaypoint")}
-                          >
-                            {"<"}
-                          </Button>
-                          <Button
-                            size="compact-xs"
-                            variant="subtle"
-                            color="gray"
-                            onClick={() => moveCurrentQuestionByStep(1)}
-                            disabled={!hasNextQuestion}
-                            rightSection={<IconChevronRight size={12} />}
-                            title={t("creator.questions.moveQuestionToNextWaypoint")}
-                          >
-                            {">"}
-                          </Button>
-                        </Group>
+                        )}
                       </Group>
-
-                      {isMobilePreviewLayout ? (
-                        <Group justify="center" gap="xs" wrap="nowrap" className="kwiz-creator-mobile-swipe-hint">
-                          <ActionIcon
-                            variant="subtle"
-                            size="sm"
-                            onClick={goToPreviousQuestion}
-                            disabled={!hasPreviousQuestion || previewEditing}
-                            aria-label={t("creator.questions.navPrevious")}
-                          >
-                            <IconChevronLeft size={14} />
-                          </ActionIcon>
-                          <Text size="xs" c="dimmed">{t("creator.questions.swipeHint")}</Text>
-                          <ActionIcon
-                            variant="subtle"
-                            size="sm"
-                            onClick={goToNextQuestion}
-                            disabled={!hasNextQuestion || previewEditing}
-                            aria-label={t("creator.questions.navNext")}
-                          >
-                            <IconChevronRight size={14} />
-                          </ActionIcon>
-                        </Group>
-                      ) : null}
-
-                      <Group justify="center" align="stretch" wrap="nowrap">
-                        {!isMobilePreviewLayout ? (
-                          <Button
-                            variant="subtle"
-                            onClick={goToPreviousQuestion}
-                            disabled={!hasPreviousQuestion || previewEditing}
-                            className="kwiz-align-self-center"
-                          >
-                            <IconChevronLeft size={20} />
-                          </Button>
-                        ) : null}
 
                         <Card
                           withBorder={!isMobilePreviewLayout}
@@ -2582,18 +2471,30 @@ export function CreateQuizPage(): JSX.Element {
 
                               {!questionPreviewActive ? (
                                 <>
-                                  <Textarea
-                                    autosize
-                                    minRows={2}
-                                    variant="unstyled"
-                                    size="lg"
-                                    placeholder={t("creator.questions.labelText")}
-                                    value={currentQuestion.text}
-                                    onFocus={setPreviewEditingFromFocus}
-                                    onBlur={clearPreviewEditingFromBlur}
-                                    onChange={(e) => updateCurrentQuestion({ ...currentQuestion, text: e.currentTarget.value })}
-                                    styles={{ input: { fontSize: 24, fontWeight: 600, lineHeight: 1.3 } }}
-                                  />
+                                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                                    <Textarea
+                                      autosize
+                                      minRows={2}
+                                      variant="unstyled"
+                                      size="lg"
+                                      placeholder={t("creator.questions.labelText")}
+                                      value={currentQuestion.text}
+                                      onFocus={setPreviewEditingFromFocus}
+                                      onBlur={clearPreviewEditingFromBlur}
+                                      onChange={(e) => updateCurrentQuestion({ ...currentQuestion, text: e.currentTarget.value })}
+                                      styles={{ input: { fontSize: 24, fontWeight: 600, lineHeight: 1.3 } }}
+                                      className="kwiz-creator-flex-1"
+                                    />
+                                    <Button
+                                      size="compact-xs"
+                                      variant="light"
+                                      leftSection={<IconSparkles size={12} />}
+                                      onClick={openAiGenerator}
+                                      style={{ flexShrink: 0, marginTop: 8 }}
+                                    >
+                                      {t("creator.questions.generateWithAi")}
+                                    </Button>
+                                  </Group>
 
                                   {currentQuestion.config.timerSeconds !== null ? (
                                     <Badge color="orange" leftSection={<IconClock size={14} />}>
@@ -2759,27 +2660,15 @@ export function CreateQuizPage(): JSX.Element {
                           </div>
                         </Card>
 
-                        {!isMobilePreviewLayout ? (
-                          <Button
-                            variant="subtle"
-                            onClick={goToNextQuestion}
-                            disabled={!hasNextQuestion || previewEditing}
-                            className="kwiz-align-self-center"
-                          >
-                            <IconChevronRight size={20} />
-                          </Button>
-                        ) : null}
-                      </Group>
-
                       {currentQuestionIssue ? (
                         <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`This card needs setup: ${currentQuestionIssue}.`}</Text>
+                          <Text size="sm">{t("creator.questions.questionNeedsSetup", { issue: currentQuestionIssue })}</Text>
                         </Alert>
                       ) : null}
 
                       {!currentQuestionIssue && questionIssues.length > 0 ? (
                         <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
-                          <Text size="sm">{`${questionIssues.length} card(s) still need setup before Next is enabled.`}</Text>
+                          <Text size="sm">{t("creator.questions.questionsNeedSetup", { count: questionIssues.length })}</Text>
                         </Alert>
                       ) : null}
                     </Stack>
