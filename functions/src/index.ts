@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+
+type AiProvider = "anthropic" | "openai";
 
 initializeApp();
 const db = getFirestore();
@@ -202,11 +205,11 @@ function parseAndValidateResponse(rawText: string, expected: {
   try {
     parsed = JSON.parse(stripJsonFences(rawText));
   } catch {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
 
   if (!parsed || typeof parsed !== "object") {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
 
   const candidate = parsed as {
@@ -222,7 +225,7 @@ function parseAndValidateResponse(rawText: string, expected: {
   const funFact = typeof candidate.funFact === "string" ? candidate.funFact.trim() : "";
   const sourceUrl = typeof candidate.sourceUrl === "string" ? candidate.sourceUrl.trim() : "";
   if (question.length < 4 || funFact.length < 4) {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
 
   const normalizedChoices = Array.isArray(candidate.choices)
@@ -240,7 +243,7 @@ function parseAndValidateResponse(rawText: string, expected: {
   if (expected.questionType === "multiple_choice") {
     const correctCount = normalizedChoices.filter((choice) => choice.correct).length;
     if (normalizedChoices.length !== expected.choiceCount || correctCount !== expected.correctAnswerCount) {
-      throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+      throw new HttpsError("invalid-argument", "ai-invalid-json");
     }
     return {
       question,
@@ -255,13 +258,13 @@ function parseAndValidateResponse(rawText: string, expected: {
 
   if (expected.questionType === "numeric") {
     if (normalizedChoices.length > 0) {
-      throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+      throw new HttpsError("invalid-argument", "ai-invalid-json");
     }
     const numericAnswer = typeof candidate.numericAnswer === "number" && Number.isFinite(candidate.numericAnswer)
       ? candidate.numericAnswer
       : null;
     if (numericAnswer === null) {
-      throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+      throw new HttpsError("invalid-argument", "ai-invalid-json");
     }
     return {
       question,
@@ -275,14 +278,14 @@ function parseAndValidateResponse(rawText: string, expected: {
   }
 
   if (normalizedChoices.length > 0) {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
   const letterOrderAnswer =
     typeof candidate.letterOrderAnswer === "string" && candidate.letterOrderAnswer.trim().length > 1
       ? candidate.letterOrderAnswer.trim()
       : null;
   if (!letterOrderAnswer) {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
   return {
     question,
@@ -295,7 +298,7 @@ function parseAndValidateResponse(rawText: string, expected: {
   };
 }
 
-async function callOpenAi(input: {
+interface AiCallInput {
   topic: string;
   topicCategory: AiTopicCategory;
   freePrompt: string;
@@ -304,10 +307,59 @@ async function callOpenAi(input: {
   language: AiLanguage;
   choiceCount: number;
   correctAnswerCount: number;
-}): Promise<string> {
+}
+
+function getAiProvider(): AiProvider {
+  const provider = (process.env.AI_PROVIDER ?? "anthropic").toLowerCase();
+  if (provider === "openai" || provider === "anthropic") return provider;
+  return "anthropic";
+}
+
+async function callAnthropic(input: AiCallInput): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || apiKey.trim().length === 0) {
+    throw new HttpsError("failed-precondition", "ai-api-key-missing");
+  }
+
+  const variationSeed = Math.random().toString(36).substring(2, 9);
+  const client = new Anthropic({ apiKey });
+
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 4096,
+      system: "You are a high-quality quiz question generator for KwizHero. Always respond with valid JSON only. No preamble, no explanation, no markdown code fences.",
+      messages: [
+        {
+          role: "user",
+          content: buildPrompt({ ...input, variationSeed }),
+        },
+      ],
+    });
+  } catch (error: unknown) {
+    if (error instanceof Anthropic.RateLimitError) {
+      throw new HttpsError("resource-exhausted", "ai-rate-limited");
+    }
+    if (error instanceof Anthropic.AuthenticationError) {
+      throw new HttpsError("failed-precondition", "ai-api-key-missing");
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Anthropic API error:", message);
+    throw new HttpsError("unavailable", "ai-request-failed");
+  }
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text" || textBlock.text.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
+  }
+  return textBlock.text;
+}
+
+async function callOpenAi(input: AiCallInput): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || apiKey.trim().length === 0) {
-    throw new HttpsError("failed-precondition", "openai-api-key-missing");
+    throw new HttpsError("failed-precondition", "ai-api-key-missing");
   }
 
   const variationSeed = Math.random().toString(36).substring(2, 9);
@@ -336,10 +388,10 @@ async function callOpenAi(input: {
   });
 
   if (response.status === 429) {
-    throw new HttpsError("resource-exhausted", "openai-rate-limited");
+    throw new HttpsError("resource-exhausted", "ai-rate-limited");
   }
   if (!response.ok) {
-    throw new HttpsError("unavailable", "openai-request-failed");
+    throw new HttpsError("unavailable", "ai-request-failed");
   }
 
   const payload = (await response.json()) as {
@@ -347,9 +399,14 @@ async function callOpenAi(input: {
   };
   const content = payload.choices?.[0]?.message?.content;
   if (!content || content.trim().length === 0) {
-    throw new HttpsError("invalid-argument", "invalid-json-from-openai");
+    throw new HttpsError("invalid-argument", "ai-invalid-json");
   }
   return content;
+}
+
+async function callAiProvider(input: AiCallInput): Promise<string> {
+  const provider = getAiProvider();
+  return provider === "anthropic" ? callAnthropic(input) : callOpenAi(input);
 }
 
 export const generateAiQuestionCallable = onCall({ invoker: "public" }, async (request) => {
@@ -379,7 +436,7 @@ export const generateAiQuestionCallable = onCall({ invoker: "public" }, async (r
     }
   }
 
-  const rawContent = await callOpenAi({
+  const rawContent = await callAiProvider({
     topic,
     topicCategory,
     freePrompt,

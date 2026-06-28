@@ -13,7 +13,7 @@ describe("mapAiErrorToI18nKey", () => {
   });
 
   it("maps missing key errors", () => {
-    expect(mapAiErrorToI18nKey({ message: "openai-api-key-missing" })).toBe("creator.questions.aiErrorApiKeyMissing");
+    expect(mapAiErrorToI18nKey({ message: "ai-api-key-missing" })).toBe("creator.questions.aiErrorApiKeyMissing");
   });
 
   it("maps invalid json errors", () => {

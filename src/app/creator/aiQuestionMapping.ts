@@ -14,16 +14,16 @@ export function mapAiErrorToI18nKey(error: unknown): string {
   const code = String((error as { code?: string }).code ?? "");
   const message = String((error as { message?: string }).message ?? "");
 
-  if (code.includes("resource-exhausted") || message.includes("openai-rate-limited")) {
+  if (code.includes("resource-exhausted") || message.includes("ai-rate-limited")) {
     return "creator.questions.aiErrorRateLimit";
   }
-  if (code.includes("failed-precondition") || message.includes("openai-api-key-missing")) {
+  if (code.includes("failed-precondition") || message.includes("ai-api-key-missing")) {
     return "creator.questions.aiErrorApiKeyMissing";
   }
   if (message.includes("source-url-unreachable")) {
     return "creator.questions.aiErrorSourceUnreachable";
   }
-  if (code.includes("invalid-argument") || message.includes("invalid-json-from-openai")) {
+  if (code.includes("invalid-argument") || message.includes("ai-invalid-json")) {
     return "creator.questions.aiErrorInvalidJson";
   }
   if (code.includes("unavailable") || code.includes("network")) {
