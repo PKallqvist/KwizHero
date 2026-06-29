@@ -1,12 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
-import { latLngBounds } from "leaflet";
-import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
 import QRCode from "qrcode";
 import {
   ActionIcon,
-  Anchor,
   Alert,
   Badge,
   Button,
@@ -14,11 +11,8 @@ import {
   Checkbox,
   Group,
   Image,
-  Loader,
   List,
-  Modal,
   NumberInput,
-  PasswordInput,
   Paper,
   Select,
   SegmentedControl,
@@ -31,27 +25,25 @@ import {
   Title,
   VisuallyHidden,
 } from "@mantine/core";
-import { IconAlertCircle, IconChevronLeft, IconChevronRight, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
+import { IconAlertCircle, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
 import {
   buildPlayShareLink,
   checkAccessCodeAvailability,
-  consumeAiToken,
   createDraftQuiz,
   generateAutoAccessCodePreview,
-  getCurrentUserTokens,
   getEditableQuizDraft,
   publishQuiz,
-  seedAiAdminPreviewTokens,
   setQuizCustomAccessCode,
   updateQuizDraft,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
-import { generateAiQuestion, type AiDifficulty, type AiLanguage, type AiTopicCategory } from "../../platform/ai/aiGenerator";
-import { buildDraftQuestionFromAiResponse, mapAiErrorToI18nKey } from "./aiQuestionMapping";
+import { CompactStepper } from "./components/CompactStepper";
+import { WaypointPicker, buildAnchoredManualLegPoints } from "./components/WaypointMapEditor";
+import { useAiGenerator } from "./components/AiGeneratorModals";
 
 const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -61,345 +53,12 @@ type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 type RoutePreviewMode = RouteMode;
 
 const PREVIEW_PRE_REVEAL_SECONDS = 3;
-const AI_UNLOCK_STORAGE_KEY = "ai_gen_unlocked";
-const AI_LOADING_LABELS = [
-  "Consulting the oracle...",
-  "Brewing a question...",
-  "Digging through the archives...",
-];
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
 function previewChoiceCardStyle(index: number): CSSProperties {
   return {
     "--kwiz-choice-border": previewChoiceBorderColors[index % previewChoiceBorderColors.length],
   } as CSSProperties;
-}
-
-function buildAnchoredManualLegPoints(
-  from: { lat: number; lng: number },
-  to: { lat: number; lng: number },
-  storedPoints: Array<{ lat: number; lng: number }>
-): Array<{ lat: number; lng: number }> {
-  if (storedPoints.length === 0) {
-    return [from, to];
-  }
-  if (storedPoints.length === 1) {
-    return [from, storedPoints[0], to];
-  }
-
-  // Stored paths currently include historical endpoints; keep interior points
-  // and always re-anchor to the latest waypoint coordinates.
-  return [from, ...storedPoints.slice(1, -1), to];
-}
-
-interface WaypointPickerProps {
-  waypoints: DraftWaypointInput[];
-  selectedWaypointIndex: number;
-  radius: number;
-  orderedRoute: boolean;
-  legModes: RoutePreviewMode[];
-  legCoordinates: Array<Array<{ lat: number; lng: number }>>;
-  drawingLegIndex: number | null;
-  drawingLegPoints: Array<{ lat: number; lng: number }>;
-  mapHeightClassName: string;
-  viewport: { lat: number; lng: number; zoom: number } | null;
-  userViewportControlled: boolean;
-  onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
-  onUserViewportControl: () => void;
-  onChange: (lat: number, lng: number) => void;
-  onDrawPointAdd: (lat: number, lng: number) => void;
-}
-
-interface WaypointOverviewMapProps {
-  waypoints: DraftWaypointInput[];
-  selectedWaypointIndex: number;
-  radius: number;
-}
-
-function WaypointPicker(props: WaypointPickerProps): JSX.Element {
-  const fallbackCenter = props.waypoints[props.selectedWaypointIndex] ?? props.waypoints[0] ?? { lat: 57.7089, lng: 11.9746 };
-  const selectedWaypoint = props.waypoints[props.selectedWaypointIndex] ?? null;
-
-  function ClickCapture(): null {
-    useMapEvents({
-      click(event) {
-        if (props.drawingLegIndex !== null) {
-          props.onDrawPointAdd(event.latlng.lat, event.latlng.lng);
-          return;
-        }
-        props.onChange(event.latlng.lat, event.latlng.lng);
-      },
-    });
-    return null;
-  }
-
-  return (
-    <MapContainer
-      center={[props.viewport?.lat ?? fallbackCenter.lat, props.viewport?.lng ?? fallbackCenter.lng]}
-      zoom={props.viewport?.zoom ?? 14}
-      scrollWheelZoom
-      className={`kwiz-map-container ${props.mapHeightClassName}`}
-    >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      <FitWaypointsBounds waypoints={props.waypoints} enabled={props.viewport === null} />
-      <EnsureSelectedWaypointVisible waypoint={selectedWaypoint} enabled={!props.userViewportControlled} />
-      <TrackMapViewport onViewportChange={props.onViewportChange} onUserInteraction={props.onUserViewportControl} />
-      {props.orderedRoute && props.waypoints.length > 1 ? (
-        <>
-          {props.waypoints.slice(0, -1).map((waypoint, index) => {
-            const next = props.waypoints[index + 1];
-            if (!next) return null;
-            const legMode = props.legModes[index] ?? "crow";
-            if (legMode === "none") return null;
-            const savedManualPath = legMode === "manual" ? props.legCoordinates[index] ?? [] : [];
-            const drawPreviewPath =
-              props.drawingLegIndex === index
-                ? [
-                    { lat: waypoint.lat, lng: waypoint.lng },
-                    ...props.drawingLegPoints,
-                    { lat: next.lat, lng: next.lng },
-                  ]
-                : [];
-            const anchoredManualPath = buildAnchoredManualLegPoints(
-              { lat: waypoint.lat, lng: waypoint.lng },
-              { lat: next.lat, lng: next.lng },
-              savedManualPath
-            );
-            const legPathPoints =
-              drawPreviewPath.length >= 2
-                ? drawPreviewPath
-                : savedManualPath.length >= 2
-                  ? anchoredManualPath
-                  : [
-                      { lat: waypoint.lat, lng: waypoint.lng },
-                      { lat: next.lat, lng: next.lng },
-                    ];
-            const legPathOptions =
-              legMode === "urban"
-                ? { color: "#2f9e44", weight: 3, opacity: 0.8 }
-                : legMode === "hiking"
-                  ? { color: "#f08c00", weight: 3, opacity: 0.8, dashArray: "7 5" }
-                  : legMode === "manual"
-                    ? { color: "#c92a2a", weight: 3, opacity: 0.8, dashArray: "10 6" }
-                    : { color: kwizTokens.map.routePath, weight: 3, opacity: 0.65 };
-            return (
-              <Polyline
-                key={`route-segment-${index}`}
-                positions={legPathPoints.map((point) => [point.lat, point.lng] as [number, number])}
-                pathOptions={legPathOptions}
-              />
-            );
-          })}
-          {props.waypoints.slice(0, -1).map((waypoint, index) => {
-            const next = props.waypoints[index + 1];
-            if (!next) return null;
-            const legMode = props.legModes[index] ?? "crow";
-            if (legMode === "none") return null;
-            const legColor =
-              legMode === "urban"
-                ? "#2f9e44"
-                : legMode === "hiking"
-                  ? "#f08c00"
-                  : legMode === "manual"
-                    ? "#c92a2a"
-                    : kwizTokens.map.routePath;
-            const legMarker = legMode === "urban" ? "U" : legMode === "hiking" ? "H" : legMode === "manual" ? "M" : "➜";
-            return (
-              <CircleMarker
-                key={`route-arrow-${index}`}
-                center={[(waypoint.lat + next.lat) / 2, (waypoint.lng + next.lng) / 2]}
-                radius={2}
-                pathOptions={{ color: legColor, fillColor: legColor, fillOpacity: 0 }}
-              >
-                <LeafletTooltip permanent direction="center" offset={[0, 0]}>{legMarker}</LeafletTooltip>
-              </CircleMarker>
-            );
-          })}
-        </>
-      ) : null}
-      {props.waypoints.map((waypoint, index) => {
-        const isSelected = index === props.selectedWaypointIndex;
-        const zoneRadius = isSelected ? props.radius : Math.max(8, Math.round(props.radius * 0.55));
-        const isFirst = index === 0;
-        const isLast = index === props.waypoints.length - 1;
-
-        return (
-          <Fragment key={`waypoint-picker-layer-${index}`}>
-            <Circle
-              center={[waypoint.lat, waypoint.lng]}
-              radius={zoneRadius}
-              pathOptions={{
-                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
-                fillOpacity: isSelected ? 0.2 : 0.1,
-              }}
-            />
-            <CircleMarker
-              center={[waypoint.lat, waypoint.lng]}
-              radius={isSelected ? 8 : 6}
-              pathOptions={{
-                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
-                fillColor: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointDefault,
-                fillOpacity: 1,
-              }}
-            >
-              <LeafletTooltip permanent={isSelected} direction="top" offset={[0, -8]}>
-                {`${index + 1}. ${waypoint.name}`}
-              </LeafletTooltip>
-            </CircleMarker>
-            {props.orderedRoute && isFirst ? (
-              <CircleMarker
-                center={[waypoint.lat, waypoint.lng]}
-                radius={1}
-                pathOptions={{ color: kwizTokens.map.startFlag, fillColor: kwizTokens.map.startFlag, fillOpacity: 0 }}
-              >
-                <LeafletTooltip permanent direction="bottom" offset={[0, 10]}>START</LeafletTooltip>
-              </CircleMarker>
-            ) : null}
-            {props.orderedRoute && isLast && props.waypoints.length > 1 ? (
-              <CircleMarker
-                center={[waypoint.lat, waypoint.lng]}
-                radius={1}
-                pathOptions={{ color: kwizTokens.map.endFlag, fillColor: kwizTokens.map.endFlag, fillOpacity: 0 }}
-              >
-                <LeafletTooltip permanent direction="bottom" offset={[0, 10]}>END</LeafletTooltip>
-              </CircleMarker>
-            ) : null}
-          </Fragment>
-        );
-      })}
-      <ClickCapture />
-    </MapContainer>
-  );
-}
-
-function EnsureSelectedWaypointVisible({ waypoint, enabled = true }: { waypoint: DraftWaypointInput | null; enabled?: boolean }): null {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!enabled) return;
-    if (!waypoint) return;
-
-    const target: [number, number] = [waypoint.lat, waypoint.lng];
-    map.panTo(target, { animate: true, duration: 0.35 });
-  }, [enabled, map, waypoint, waypoint?.lat, waypoint?.lng]);
-
-  return null;
-}
-
-function TrackMapViewport({
-  onViewportChange,
-  onUserInteraction,
-}: {
-  onViewportChange: (viewport: { lat: number; lng: number; zoom: number }) => void;
-  onUserInteraction: () => void;
-}): null {
-  const map = useMap();
-
-  useEffect(() => {
-    const reportViewport = () => {
-      const center = map.getCenter();
-      onViewportChange({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
-    };
-
-    reportViewport();
-    map.on("moveend", reportViewport);
-    map.on("zoomend", reportViewport);
-
-    return () => {
-      map.off("moveend", reportViewport);
-      map.off("zoomend", reportViewport);
-    };
-  }, [map, onViewportChange]);
-
-  useEffect(() => {
-    const container = map.getContainer();
-    const reportInteraction = () => onUserInteraction();
-
-    container.addEventListener("wheel", reportInteraction, { passive: true });
-    container.addEventListener("mousedown", reportInteraction);
-    container.addEventListener("touchstart", reportInteraction, { passive: true });
-
-    return () => {
-      container.removeEventListener("wheel", reportInteraction);
-      container.removeEventListener("mousedown", reportInteraction);
-      container.removeEventListener("touchstart", reportInteraction);
-    };
-  }, [map, onUserInteraction]);
-
-  return null;
-}
-
-function FitWaypointsBounds(props: { waypoints: DraftWaypointInput[]; enabled?: boolean }): null {
-  const map = useMap();
-
-  useEffect(() => {
-    if (props.enabled === false) return;
-    if (props.waypoints.length === 0) return;
-
-    if (props.waypoints.length === 1) {
-      const only = props.waypoints[0];
-      map.setView([only.lat, only.lng], 14);
-      return;
-    }
-
-    const bounds = latLngBounds(props.waypoints.map((waypoint) => [waypoint.lat, waypoint.lng] as [number, number]));
-    map.fitBounds(bounds, { padding: [28, 28] });
-  }, [map, props.enabled, props.waypoints]);
-
-  return null;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function WaypointOverviewMap(props: WaypointOverviewMapProps): JSX.Element {
-  const fallbackCenter = props.waypoints[props.selectedWaypointIndex] ?? props.waypoints[0] ?? { lat: 57.7089, lng: 11.9746 };
-
-  return (
-    <MapContainer
-      center={[fallbackCenter.lat, fallbackCenter.lng]}
-      zoom={13}
-      scrollWheelZoom
-      className="kwiz-map-overview"
-    >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      <FitWaypointsBounds waypoints={props.waypoints} />
-      {props.waypoints.map((waypoint, index) => {
-        const isSelected = index === props.selectedWaypointIndex;
-        const zoneRadius = isSelected ? props.radius : Math.max(8, Math.round(props.radius * 0.55));
-
-        return (
-          <Fragment key={`waypoint-layer-${index}`}>
-            <Circle
-              center={[waypoint.lat, waypoint.lng]}
-              radius={zoneRadius}
-              pathOptions={{
-                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
-                fillOpacity: isSelected ? 0.2 : 0.1,
-              }}
-            />
-            <CircleMarker
-              center={[waypoint.lat, waypoint.lng]}
-              radius={isSelected ? 8 : 6}
-              pathOptions={{
-                color: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointMuted,
-                fillColor: isSelected ? kwizTokens.map.selectedWaypoint : kwizTokens.map.waypointDefault,
-                fillOpacity: 1,
-              }}
-            >
-              <LeafletTooltip permanent={isSelected} direction="top" offset={[0, -8]}>
-                {`${index + 1}. ${waypoint.name}`}
-              </LeafletTooltip>
-            </CircleMarker>
-          </Fragment>
-        );
-      })}
-    </MapContainer>
-  );
 }
 
 function createDefaultQuestion(questionType: QuestionType = "multiple_choice"): DraftQuestionInput {
@@ -501,57 +160,6 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
   return null;
 }
 
-function CompactStepper(props: {
-  step: number;
-  labels: string[];
-  onStepClick?: (step: number) => void;
-}): JSX.Element {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<HTMLButtonElement>(null);
-  const scroll = (dir: number) => trackRef.current?.scrollBy({ left: dir * 120, behavior: "smooth" });
-
-  useEffect(() => {
-    activeRef.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [props.step]);
-
-  return (
-    <div className="kwiz-stepper-wrap">
-      <button type="button" className="kwiz-stepper-arrow is-left" onClick={() => scroll(-1)} aria-label="Scroll left">
-        <IconChevronLeft size={14} />
-      </button>
-      <div className="kwiz-stepper-track" ref={trackRef}>
-        {props.labels.map((label, i) => {
-          const stepNum = i + 1;
-          const done = stepNum < props.step;
-          const active = stepNum === props.step;
-          const circleClass = `kwiz-stepper-circle ${done ? "is-done" : active ? "is-active" : "is-todo"}`;
-          const labelClass = `kwiz-stepper-label ${done ? "is-done" : active ? "is-active" : "is-todo"}`;
-          return (
-            <Fragment key={stepNum}>
-              {i > 0 && <span className="kwiz-stepper-connector" />}
-              <button
-                type="button"
-                className="kwiz-stepper-item"
-                ref={active ? activeRef : undefined}
-                onClick={props.onStepClick ? () => props.onStepClick!(stepNum) : undefined}
-                disabled={!props.onStepClick}
-              >
-                <span className={circleClass}>
-                  {done ? <IconCircleCheck size={18} /> : stepNum}
-                </span>
-                <span className={labelClass}>{label}</span>
-              </button>
-            </Fragment>
-          );
-        })}
-      </div>
-      <button type="button" className="kwiz-stepper-arrow is-right" onClick={() => scroll(1)} aria-label="Scroll right">
-        <IconChevronRight size={14} />
-      </button>
-    </div>
-  );
-}
-
 export function CreateQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
   const [searchParams] = useSearchParams();
@@ -607,12 +215,6 @@ export function CreateQuizPage(): JSX.Element {
   const [questionPreviewActive, setQuestionPreviewActive] = useState(false);
   const [previewPhase, setPreviewPhase] = useState<CreatorPreviewPhase>("front");
   const [previewCountdown, setPreviewCountdown] = useState<number | null>(null);
-  const [dragQuestionIndex, setDragQuestionIndex] = useState<number | null>(null);
-  const [dragOverQuestionIndex, setDragOverQuestionIndex] = useState<number | null>(null);
-  const [moveMode, setMoveMode] = useState(false);
-  const [moveModePulse, setMoveModePulse] = useState(false);
-  const [focusedQuestionIndex, setFocusedQuestionIndex] = useState<number | null>(null);
-  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
   const [previewEditing, setPreviewEditing] = useState(false);
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
@@ -622,29 +224,17 @@ export function CreateQuizPage(): JSX.Element {
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [aiUnlockModalOpen, setAiUnlockModalOpen] = useState(false);
-  const [aiUnlocked, setAiUnlocked] = useState(false);
-  const [aiPasswordDraft, setAiPasswordDraft] = useState("");
-  const [aiPasswordShake, setAiPasswordShake] = useState(false);
-  const [aiTopic, setAiTopic] = useState("");
-  const [aiTopicCategory, setAiTopicCategory] = useState<AiTopicCategory>("history");
-  const [aiFreePrompt, setAiFreePrompt] = useState("");
-  const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("medium");
-  const [aiQuestionType, setAiQuestionType] = useState<QuestionType>("multiple_choice");
-  const [aiLanguage, setAiLanguage] = useState<AiLanguage>("sv");
-  const [aiChoiceCount, setAiChoiceCount] = useState(4);
-  const [aiCorrectAnswerCount, setAiCorrectAnswerCount] = useState(1);
-  const [aiTokenBalance, setAiTokenBalance] = useState<number | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiLoadingLabelIndex, setAiLoadingLabelIndex] = useState(0);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiPreviewQuestion, setAiPreviewQuestion] = useState<DraftQuestionInput | null>(null);
-  const [aiPreviewSourceVerified, setAiPreviewSourceVerified] = useState(true);
+  const { openAiGenerator, renderModals: renderAiModals } = useAiGenerator({
+    currentQuestionType: currentQuestion?.questionType,
+    currentQuestionConfig: currentQuestion?.config,
+    locale: input.locale,
+    onApply: (question) => {
+      if (!currentQuestion) return;
+      updateCurrentQuestion({ ...currentQuestion, ...question });
+    },
+  });
   const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const moveModePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewEditorRef = useRef<HTMLDivElement | null>(null);
   const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
   const focusWaypointNameAfterAddRef = useRef<number | null>(null);
@@ -660,141 +250,6 @@ export function CreateQuizPage(): JSX.Element {
     const playValue = !input.isPublic && editingQuizStatus === "published" && displayedAccessCode ? displayedAccessCode : result.quizId;
     return buildPlayShareLink(playValue);
   }, [displayedAccessCode, editingQuizStatus, input.isPublic, result]);
-  const aiPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
-  const aiPasswordConfigured = aiPassword.length > 0;
-
-  useEffect(() => {
-    setAiUnlocked(localStorage.getItem(AI_UNLOCK_STORAGE_KEY) === "true");
-  }, []);
-
-  useEffect(() => {
-    if (!aiLoading) {
-      setAiLoadingLabelIndex(0);
-      return;
-    }
-    const timer = setInterval(() => {
-      setAiLoadingLabelIndex((index) => (index + 1) % AI_LOADING_LABELS.length);
-    }, 1400);
-    return () => clearInterval(timer);
-  }, [aiLoading]);
-
-  useEffect(() => {
-    setAiCorrectAnswerCount((previous) => Math.max(1, Math.min(previous, aiChoiceCount)));
-  }, [aiChoiceCount]);
-
-  async function refreshAiTokenBalance(): Promise<void> {
-    try {
-      const tokens = await getCurrentUserTokens();
-      setAiTokenBalance(tokens.aiTokens);
-    } catch {
-      setAiTokenBalance(0);
-    }
-  }
-
-  function openAiGenerator(): void {
-    setAiError(null);
-    setAiPreviewQuestion(null);
-    setAiPreviewSourceVerified(true);
-    setAiQuestionType(currentQuestion?.questionType ?? "multiple_choice");
-    setAiLanguage(input.locale === "sv" ? "sv" : "en");
-    if (!aiUnlocked) {
-      setAiUnlockModalOpen(true);
-      return;
-    }
-    setAiPanelOpen(true);
-    void refreshAiTokenBalance();
-  }
-
-  async function submitAiUnlock(): Promise<void> {
-    if (!aiPasswordConfigured) {
-      setAiError(t("creator.questions.aiErrorApiKeyMissing"));
-      return;
-    }
-    if (aiPasswordDraft === aiPassword) {
-      try {
-        const seeded = await seedAiAdminPreviewTokens(9999);
-        setAiTokenBalance(seeded.aiTokens);
-      } catch {
-        setAiError(t("creator.questions.aiErrorTokenUpdate"));
-        return;
-      }
-      localStorage.setItem(AI_UNLOCK_STORAGE_KEY, "true");
-      setAiUnlocked(true);
-      setAiUnlockModalOpen(false);
-      setAiPasswordDraft("");
-      setAiPanelOpen(true);
-      void refreshAiTokenBalance();
-      return;
-    }
-    setAiPasswordShake(true);
-    window.setTimeout(() => setAiPasswordShake(false), 350);
-  }
-
-  async function generateQuestionWithAi(): Promise<void> {
-    if (!currentQuestion) return;
-    setAiError(null);
-    const topic = aiTopic.trim();
-    if (topic.length < 2) {
-      setAiError(t("creator.questions.aiErrorInvalidJson"));
-      return;
-    }
-
-    const currentBalance = aiTokenBalance ?? 0;
-    if (currentBalance < 1) {
-      setAiError(t("creator.questions.aiNoTokens"));
-      return;
-    }
-
-    setAiLoading(true);
-    setAiPreviewQuestion(null);
-    setAiPreviewSourceVerified(true);
-    try {
-      const response = await generateAiQuestion({
-        topic,
-        topicCategory: aiTopicCategory,
-        freePrompt: aiFreePrompt.trim() || undefined,
-        difficulty: aiDifficulty,
-        questionType: aiQuestionType,
-        language: aiLanguage,
-        choiceCount: aiQuestionType === "multiple_choice" ? aiChoiceCount : undefined,
-        correctAnswerCount: aiQuestionType === "multiple_choice" ? aiCorrectAnswerCount : undefined,
-      });
-
-      const previewQuestion = buildDraftQuestionFromAiResponse({
-        questionType: aiQuestionType,
-        response,
-        config: {
-          ...currentQuestion.config,
-        },
-      });
-
-      try {
-        const tokenUpdate = await consumeAiToken();
-        setAiTokenBalance(tokenUpdate.aiTokens);
-      } catch {
-        setAiError(t("creator.questions.aiErrorTokenUpdate"));
-        setAiPreviewQuestion(null);
-        return;
-      }
-
-      setAiPreviewQuestion(previewQuestion);
-      setAiPreviewSourceVerified(response.sourceVerified);
-    } catch (error) {
-      setAiError(t(mapAiErrorToI18nKey(error)));
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
-  function applyAiPreviewQuestion(): void {
-    if (!aiPreviewQuestion || !currentQuestion) return;
-    updateCurrentQuestion({
-      ...currentQuestion,
-      ...aiPreviewQuestion,
-    });
-    setAiPanelOpen(false);
-  }
-
   useEffect(() => {
     async function buildQr(): Promise<void> {
       if (!shareLink) {
@@ -1139,123 +594,6 @@ export function CreateQuizPage(): JSX.Element {
     setSelectedQuestionIndex(0);
   }
 
-  function moveCurrentQuestionByStep(direction: -1 | 1): void {
-    if (!currentQuestion) return;
-    if (currentQuestionPositionIndex < 0) return;
-
-    const targetPosition = questionPositions[currentQuestionPositionIndex + direction];
-    if (!targetPosition) return;
-
-    let currentQuestionForMove: DraftQuestionInput = currentQuestion;
-    if (currentQuestion.questionType === "multiple_choice") {
-      const trimmedDraft = choiceDraft.trim();
-      if (trimmedDraft.length > 0) {
-        const nextChoiceIndex = currentQuestion.choices.length;
-        currentQuestionForMove = {
-          ...currentQuestion,
-          choices: [...currentQuestion.choices, trimmedDraft],
-          correctChoiceIndexes: choiceDraftIsCorrect
-            ? [...currentQuestion.correctChoiceIndexes, nextChoiceIndex]
-            : [...currentQuestion.correctChoiceIndexes],
-        };
-      }
-    }
-
-    setChoiceDraft("");
-    setChoiceDraftIsCorrect(false);
-    setChoiceDraftVisible(false);
-
-    const sourceWaypointIndex = selectedWaypointIndex;
-    const sourceQuestionIndex = selectedQuestionIndex;
-    const isSameWaypointMove = targetPosition.waypointIndex === sourceWaypointIndex;
-    const targetWaypointLengthBeforeMove = input.waypoints[targetPosition.waypointIndex]?.questions.length ?? 0;
-
-    setInput((prev) => {
-      const nextWaypoints = prev.waypoints.map((waypoint) => ({
-        ...waypoint,
-        questions: [...waypoint.questions],
-      }));
-
-      const sourceWaypoint = nextWaypoints[sourceWaypointIndex];
-      const targetWaypoint = nextWaypoints[targetPosition.waypointIndex];
-      if (!sourceWaypoint || !targetWaypoint) return prev;
-
-      if (isSameWaypointMove) {
-        const targetQuestion = targetWaypoint.questions[targetPosition.questionIndex];
-        if (!targetQuestion) return prev;
-        sourceWaypoint.questions[sourceQuestionIndex] = targetQuestion;
-        targetWaypoint.questions[targetPosition.questionIndex] = currentQuestionForMove;
-      } else {
-        sourceWaypoint.questions.splice(sourceQuestionIndex, 1);
-        const insertIndex = direction === -1 ? targetWaypoint.questions.length : 0;
-        targetWaypoint.questions.splice(insertIndex, 0, currentQuestionForMove);
-      }
-
-      return { ...prev, waypoints: nextWaypoints };
-    });
-
-    if (isSameWaypointMove) {
-      setSelectedWaypointIndex(targetPosition.waypointIndex);
-      setSelectedQuestionIndex(targetPosition.questionIndex);
-      return;
-    }
-
-    setSelectedWaypointIndex(targetPosition.waypointIndex);
-    setSelectedQuestionIndex(direction === -1 ? targetWaypointLengthBeforeMove : 0);
-  }
-
-  function reorderQuestionsInCurrentWaypoint(fromIndex: number, toIndex: number): void {
-    if (!currentWaypoint) return;
-    if (fromIndex === toIndex) return;
-    if (fromIndex < 0 || toIndex < 0) return;
-    if (fromIndex >= currentWaypoint.questions.length || toIndex >= currentWaypoint.questions.length) return;
-
-    const nextQuestions = [...currentWaypoint.questions];
-    const [moved] = nextQuestions.splice(fromIndex, 1);
-    nextQuestions.splice(toIndex, 0, moved);
-    updateCurrentWaypoint({ ...currentWaypoint, questions: nextQuestions });
-    setSelectedQuestionIndex(toIndex);
-    setFocusedQuestionIndex(toIndex);
-    setReorderAnnouncement(
-      t("creator.questions.reorderMoved", {
-        from: fromIndex + 1,
-        to: toIndex + 1,
-      })
-    );
-  }
-
-  function handleQuestionPointerDown(index: number): void {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-    }
-    longPressTimerRef.current = setTimeout(() => {
-      setSelectedQuestionIndex(index);
-      setMoveMode(true);
-      setMoveModePulse(true);
-      if (moveModePulseTimerRef.current) {
-        clearTimeout(moveModePulseTimerRef.current);
-      }
-      moveModePulseTimerRef.current = setTimeout(() => setMoveModePulse(false), 180);
-    }, 450);
-  }
-
-  function clearLongPressTimer(): void {
-    if (!longPressTimerRef.current) return;
-    clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = null;
-  }
-
-  useEffect(() => {
-    return () => {
-      if (moveModePulseTimerRef.current) {
-        clearTimeout(moveModePulseTimerRef.current);
-      }
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current);
-      }
-    };
-  }, []);
-
   async function onCreate(): Promise<void> {
     const hasRequiredIdentityData = input.title.trim().length > 2 && input.description.trim().length > 0;
     if (!hasRequiredIdentityData) {
@@ -1336,14 +674,6 @@ export function CreateQuizPage(): JSX.Element {
   const hasNextQuestion =
     currentQuestionPositionIndex >= 0 &&
     currentQuestionPositionIndex < questionPositions.length - 1;
-  function getQuestionGlobalNumber(questionIndex: number): number {
-    return (
-      input.waypoints.slice(0, selectedWaypointIndex).reduce((sum, waypoint) => sum + waypoint.questions.length, 0) +
-      questionIndex +
-      1
-    );
-  }
-
   function goToPreviousQuestion(): void {
     if (!hasPreviousQuestion) return;
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
@@ -1431,11 +761,6 @@ export function CreateQuizPage(): JSX.Element {
     cancelManualLegDrawing();
   }, [cancelManualLegDrawing, drawingLegIndex, drawingLegPoints, input, t]);
 
-  function selectQuestion(index: number): void {
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    setSelectedQuestionIndex(index);
-  }
-
   function onPreviewPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     previewSwipeStartRef.current = { x: event.clientX, y: event.clientY };
   }
@@ -1456,16 +781,6 @@ export function CreateQuizPage(): JSX.Element {
       return;
     }
     goToPreviousQuestion();
-  }
-
-  function moveSelectedQuestionLeft(): void {
-    if (!hasPreviousQuestion) return;
-    reorderQuestionsInCurrentWaypoint(selectedQuestionIndex, selectedQuestionIndex - 1);
-  }
-
-  function moveSelectedQuestionRight(): void {
-    if (!hasNextQuestion) return;
-    reorderQuestionsInCurrentWaypoint(selectedQuestionIndex, selectedQuestionIndex + 1);
   }
 
   useEffect(() => {
@@ -2736,154 +2051,6 @@ export function CreateQuizPage(): JSX.Element {
                     </Stack>
                   </Card>
 
-                  {input.waypoints.length < 0 ? (
-                  <Card withBorder radius="md" p="sm">
-                    <Stack gap="sm">
-                      <Group justify="space-between" align="center" wrap="wrap">
-                        <Text size="sm" fw={600}>{t("creator.questions.reorderTitle")}</Text>
-                        <Text size="xs" c="dimmed">{t("creator.questions.reorderHint")}</Text>
-                      </Group>
-                      <Text size="xs" c="dimmed">{t("creator.questions.reorderKeyboardHint")}</Text>
-
-                      <Group gap="xs" wrap="wrap">
-                        {currentWaypoint.questions.map((question, index) => {
-                          const isSelected = selectedQuestionIndex === index;
-                          const isValid = isQuestionValid(question);
-                          const isDragSource = dragQuestionIndex === index;
-                          const isDropTarget = dragOverQuestionIndex === index && dragQuestionIndex !== index;
-                          return (
-                            <Paper
-                              key={`question-order-item-${index}`}
-                              withBorder
-                              radius="md"
-                              p="xs"
-                              draggable={!previewEditing}
-                              tabIndex={0}
-                              role="button"
-                              aria-label={t("creator.questions.previewQuestionBadge", { number: index + 1 })}
-                              onDragStart={() => {
-                                setDragQuestionIndex(index);
-                                selectQuestion(index);
-                              }}
-                              onDragOver={(event) => {
-                                event.preventDefault();
-                                setDragOverQuestionIndex(index);
-                              }}
-                              onDragLeave={() => {
-                                if (dragOverQuestionIndex === index) {
-                                  setDragOverQuestionIndex(null);
-                                }
-                              }}
-                              onDrop={() => {
-                                if (dragQuestionIndex === null) return;
-                                reorderQuestionsInCurrentWaypoint(dragQuestionIndex, index);
-                                setDragQuestionIndex(null);
-                                setDragOverQuestionIndex(null);
-                              }}
-                              onDragEnd={() => {
-                                setDragQuestionIndex(null);
-                                setDragOverQuestionIndex(null);
-                              }}
-                              onClick={() => selectQuestion(index)}
-                              onFocus={() => {
-                                selectQuestion(index);
-                                setFocusedQuestionIndex(index);
-                              }}
-                              onBlur={() => {
-                                if (focusedQuestionIndex === index) {
-                                  setFocusedQuestionIndex(null);
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if ((event.key === "Enter" || event.key === " ") && !event.repeat) {
-                                  event.preventDefault();
-                                  const nextMoveMode = !moveMode;
-                                  setMoveMode(nextMoveMode);
-                                  if (nextMoveMode) {
-                                    setMoveModePulse(true);
-                                    if (moveModePulseTimerRef.current) {
-                                      clearTimeout(moveModePulseTimerRef.current);
-                                    }
-                                    moveModePulseTimerRef.current = setTimeout(() => setMoveModePulse(false), 180);
-                                  }
-                                  return;
-                                }
-
-                                if (event.key === "Escape") {
-                                  setMoveMode(false);
-                                  setReorderAnnouncement(t("creator.questions.reorderDone"));
-                                  return;
-                                }
-
-                                if (event.key === "ArrowLeft" && (event.ctrlKey || moveMode) && index > 0) {
-                                  event.preventDefault();
-                                  reorderQuestionsInCurrentWaypoint(index, index - 1);
-                                  return;
-                                }
-
-                                if (
-                                  event.key === "ArrowRight" &&
-                                  (event.ctrlKey || moveMode) &&
-                                  index < currentWaypoint.questions.length - 1
-                                ) {
-                                  event.preventDefault();
-                                  reorderQuestionsInCurrentWaypoint(index, index + 1);
-                                }
-                              }}
-                              onPointerDown={() => !previewEditing && handleQuestionPointerDown(index)}
-                              onPointerUp={clearLongPressTimer}
-                              onPointerLeave={clearLongPressTimer}
-                              style={{
-                                cursor: previewEditing ? "default" : "grab",
-                                borderStyle: isDropTarget ? "dashed" : "solid",
-                                borderWidth: isDropTarget ? 2 : 1,
-                                borderColor: isSelected ? "var(--mantine-color-teal-6)" : undefined,
-                                background: isSelected ? "var(--mantine-color-teal-0)" : undefined,
-                                outline: focusedQuestionIndex === index ? "2px solid var(--mantine-color-blue-6)" : "none",
-                                outlineOffset: focusedQuestionIndex === index ? 2 : 0,
-                                opacity: isDragSource ? 0.45 : 1,
-                                transform: moveModePulse && isSelected ? "scale(1.025)" : "scale(1)",
-                                boxShadow: moveModePulse && isSelected ? "0 0 0 3px rgba(15, 107, 95, 0.18)" : "none",
-                                transition: "transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
-                                minWidth: 150,
-                              }}
-                            >
-                              <Stack gap={2}>
-                                <Text size="xs" fw={700}>{`Q${getQuestionGlobalNumber(index)}`}</Text>
-                                <Text size="xs" lineClamp={2}>{question.text || t("creator.questions.untitledQuestion")}</Text>
-                                <Badge size="xs" color={isValid ? "teal" : "orange"} variant="light">
-                                  {isValid ? t("creator.questions.reorderReady") : t("creator.questions.reorderNeedsSetup")}
-                                </Badge>
-                              </Stack>
-                            </Paper>
-                          );
-                        })}
-                      </Group>
-
-                      {moveMode ? (
-                        <Group>
-                          <Button
-                            variant="light"
-                            onClick={moveSelectedQuestionLeft}
-                            disabled={!hasPreviousQuestion}
-                            leftSection={<IconChevronLeft size={16} />}
-                          >
-                            {t("creator.questions.reorderMoveLeft")}
-                          </Button>
-                          <Button
-                            variant="light"
-                            onClick={moveSelectedQuestionRight}
-                            disabled={!hasNextQuestion}
-                            rightSection={<IconChevronRight size={16} />}
-                          >
-                            {t("creator.questions.reorderMoveRight")}
-                          </Button>
-                          <Button variant="default" onClick={() => setMoveMode(false)}>{t("creator.questions.reorderDone")}</Button>
-                        </Group>
-                      ) : null}
-                    </Stack>
-                  </Card>
-                  ) : null}
                 </>
               ) : null}
             </Stack>
@@ -3041,222 +2208,7 @@ export function CreateQuizPage(): JSX.Element {
           </SimpleGrid>
         ) : null}
 
-        <Modal
-          opened={aiUnlockModalOpen}
-          onClose={() => setAiUnlockModalOpen(false)}
-          title={t("creator.questions.aiUnlockTitle")}
-          centered
-          size="sm"
-        >
-          <Stack className={aiPasswordShake ? "kwiz-ai-shake" : undefined}>
-            <PasswordInput
-              label={t("creator.questions.aiUnlockPassword")}
-              value={aiPasswordDraft}
-              onChange={(event) => setAiPasswordDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void submitAiUnlock();
-                }
-              }}
-            />
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => setAiUnlockModalOpen(false)}>
-                {t("common.cancel")}
-              </Button>
-              <Button onClick={() => void submitAiUnlock()}>{t("creator.questions.aiUnlockAction")}</Button>
-            </Group>
-          </Stack>
-        </Modal>
-
-        <Modal
-          opened={aiPanelOpen}
-          onClose={() => setAiPanelOpen(false)}
-          title={t("creator.questions.generateWithAi")}
-          centered
-          size="lg"
-        >
-          <Stack gap="sm">
-            <Group justify="space-between" align="center">
-              <Text size="sm" c="dimmed">{t("creator.questions.aiPanelSubtitle")}</Text>
-              <Badge color={(aiTokenBalance ?? 0) > 0 ? "teal" : "orange"} variant="light">
-                {(aiTokenBalance ?? 0) > 0
-                  ? t("creator.questions.aiTokensRemaining", { count: aiTokenBalance ?? 0 })
-                  : t("creator.questions.aiNoTokens")}
-              </Badge>
-            </Group>
-
-            <TextInput
-              label={t("creator.questions.aiTopic")}
-              placeholder={t("creator.questions.aiTopicPlaceholder")}
-              value={aiTopic}
-              onChange={(event) => setAiTopic(event.currentTarget.value)}
-            />
-
-            <Select
-              label={t("creator.questions.aiTopicCategory")}
-              value={aiTopicCategory}
-              data={[
-                { value: "history", label: t("creator.questions.aiTopicCategoryHistory") },
-                { value: "music", label: t("creator.questions.aiTopicCategoryMusic") },
-                { value: "sports", label: t("creator.questions.aiTopicCategorySports") },
-                { value: "climate", label: t("creator.questions.aiTopicCategoryClimate") },
-                { value: "science", label: t("creator.questions.aiTopicCategoryScience") },
-                { value: "geography", label: t("creator.questions.aiTopicCategoryGeography") },
-                { value: "culture", label: t("creator.questions.aiTopicCategoryCulture") },
-                { value: "politics", label: t("creator.questions.aiTopicCategoryPolitics") },
-                { value: "nature", label: t("creator.questions.aiTopicCategoryNature") },
-                { value: "technology", label: t("creator.questions.aiTopicCategoryTechnology") },
-                { value: "food", label: t("creator.questions.aiTopicCategoryFood") },
-                { value: "art", label: t("creator.questions.aiTopicCategoryArt") },
-                { value: "custom", label: t("creator.questions.aiTopicCategoryCustom") },
-              ]}
-              onChange={(value) => setAiTopicCategory((value ?? "history") as AiTopicCategory)}
-            />
-
-            <Textarea
-              label={t("creator.questions.aiFreePrompt")}
-              placeholder={t("creator.questions.aiFreePromptPlaceholder")}
-              maxLength={300}
-              minRows={2}
-              autosize
-              value={aiFreePrompt}
-              onChange={(event) => setAiFreePrompt(event.currentTarget.value)}
-            />
-
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-              <SegmentedControl
-                fullWidth
-                data={[
-                  { value: "easy", label: t("creator.questions.aiDifficultyEasy") },
-                  { value: "medium", label: t("creator.questions.aiDifficultyMedium") },
-                  { value: "hard", label: t("creator.questions.aiDifficultyHard") },
-                ]}
-                value={aiDifficulty}
-                onChange={(value) => setAiDifficulty(value as AiDifficulty)}
-              />
-              <SegmentedControl
-                fullWidth
-                data={[
-                  { value: "multiple_choice", label: "A/B/C" },
-                  { value: "numeric", label: "123" },
-                  { value: "letter_order", label: "ABC" },
-                ]}
-                value={aiQuestionType}
-                onChange={(value) => setAiQuestionType(value as QuestionType)}
-              />
-            </SimpleGrid>
-
-            <Select
-              label={t("creator.questions.aiLanguage")}
-              data={[
-                { value: "sv", label: "Svenska" },
-                { value: "en", label: "English" },
-              ]}
-              value={aiLanguage}
-              onChange={(value) => setAiLanguage((value ?? "sv") as AiLanguage)}
-            />
-
-            {aiQuestionType === "multiple_choice" ? (
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-                <NumberInput
-                  label={t("creator.questions.aiChoiceCount")}
-                  min={2}
-                  max={8}
-                  value={aiChoiceCount}
-                  onChange={(value) => setAiChoiceCount(typeof value === "number" ? value : 4)}
-                />
-                <NumberInput
-                  label={t("creator.questions.aiCorrectAnswerCount")}
-                  min={1}
-                  max={aiChoiceCount}
-                  value={aiCorrectAnswerCount}
-                  onChange={(value) => setAiCorrectAnswerCount(typeof value === "number" ? value : 1)}
-                />
-              </SimpleGrid>
-            ) : null}
-
-            {aiError ? (
-              <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />}>
-                {aiError}
-              </Alert>
-            ) : null}
-
-            {aiLoading ? (
-              <Paper withBorder radius="md" p="md">
-                <Stack align="center" gap="xs">
-                  <Loader size="sm" />
-                  <Text size="sm">{AI_LOADING_LABELS[aiLoadingLabelIndex]}</Text>
-                </Stack>
-              </Paper>
-            ) : null}
-
-            {aiPreviewQuestion ? (
-              <Card withBorder radius="md" p="sm">
-                <Stack gap="xs">
-                  {!aiPreviewSourceVerified ? (
-                    <Alert color="yellow" icon={<IconAlertCircle size={16} />}>
-                      {t("creator.questions.aiSourceNotVerified")}
-                    </Alert>
-                  ) : null}
-                  <Text fw={600}>{aiPreviewQuestion.text}</Text>
-                  {aiPreviewQuestion.questionType === "multiple_choice" ? (
-                    <Stack gap={4}>
-                      {aiPreviewQuestion.choices.map((choice, index) => (
-                        <Text key={`ai-preview-choice-${index}`} size="sm">
-                          {`${index + 1}. ${choice}${aiPreviewQuestion.correctChoiceIndexes.includes(index) ? "  ✓" : ""}`}
-                        </Text>
-                      ))}
-                    </Stack>
-                  ) : null}
-                  {aiPreviewQuestion.questionType === "numeric" ? (
-                    <Text size="sm">{`${t("creator.questions.numericAnswer")}: ${String(aiPreviewQuestion.numericAnswer ?? "")}`}</Text>
-                  ) : null}
-                  {aiPreviewQuestion.questionType === "letter_order" ? (
-                    <Text size="sm">{`${t("creator.questions.letterOrderAnswer")}: ${aiPreviewQuestion.letterOrderAnswer ?? ""}`}</Text>
-                  ) : null}
-                  {aiPreviewQuestion.sourceUrl ? (
-                    <Group gap={6}>
-                      <Text size="sm" c="dimmed">
-                        {t("creator.questions.aiSource")}
-                      </Text>
-                      <Anchor href={aiPreviewQuestion.sourceUrl} target="_blank" rel="noopener noreferrer" size="sm">
-                        {t("creator.questions.aiOpenSource")}
-                      </Anchor>
-                    </Group>
-                  ) : null}
-                </Stack>
-              </Card>
-            ) : null}
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => setAiPanelOpen(false)}>
-                {t("common.cancel")}
-              </Button>
-              {aiPreviewQuestion ? (
-                <>
-                  <Button
-                    variant="light"
-                    onClick={() => void generateQuestionWithAi()}
-                    disabled={aiLoading || (aiTokenBalance ?? 0) < 1}
-                  >
-                    {t("creator.questions.aiRegenerate")}
-                  </Button>
-                  <Button onClick={applyAiPreviewQuestion}>{t("creator.questions.aiUseQuestion")}</Button>
-                </>
-              ) : (
-                <Button
-                  leftSection={<IconSparkles size={14} />}
-                  onClick={() => void generateQuestionWithAi()}
-                  loading={aiLoading}
-                  disabled={(aiTokenBalance ?? 0) < 1}
-                >
-                  {t("creator.questions.aiGenerate")}
-                </Button>
-              )}
-            </Group>
-          </Stack>
-        </Modal>
+        {renderAiModals()}
 
         <Group justify="space-between">
           <Button variant="default" onClick={previousStep} disabled={step === 1}>
