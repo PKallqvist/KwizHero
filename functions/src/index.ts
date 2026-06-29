@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 
 type AiProvider = "anthropic" | "openai";
 
-initializeApp();
+const app = initializeApp();
 const db = getFirestore();
+const auth = getAuth(app);
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -588,12 +590,10 @@ export const giftAiTokensCallable = onCall({ invoker: "public" }, async (request
 
   let resolvedUid = targetUid;
   if (!resolvedUid && targetEmail) {
-    const usersSnapshot = await db.collection("playerProfiles").get();
-    for (const userDoc of usersSnapshot.docs) {
-      resolvedUid = userDoc.id;
-      break;
-    }
-    if (!resolvedUid) {
+    try {
+      const userRecord = await auth.getUserByEmail(targetEmail);
+      resolvedUid = userRecord.uid;
+    } catch {
       throw new HttpsError("not-found", "No user found for that email");
     }
   }
@@ -618,4 +618,54 @@ export const giftAiTokensCallable = onCall({ invoker: "public" }, async (request
 
   const updated = await profileRef.get();
   return { ok: true, uid: resolvedUid, aiTokens: updated.get("aiTokens") ?? 0 };
+});
+
+export const searchUsersCallable = onCall({ invoker: "public" }, async (request) => {
+  const searchQuery = String(request.data?.query ?? "").trim();
+  const adminPassword = String(request.data?.adminPassword ?? "").trim();
+
+  if (!searchQuery) {
+    throw new HttpsError("invalid-argument", "query is required");
+  }
+
+  const configuredAdminPassword = process.env.ADMIN_PASSWORD ?? "";
+  const isAdmin = adminPassword.length > 0
+    && configuredAdminPassword.length > 0
+    && adminPassword === configuredAdminPassword;
+
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin access required");
+  }
+
+  const results: Array<{ uid: string; email: string | undefined; displayName: string | undefined; aiTokens: number }> = [];
+
+  if (searchQuery.includes("@")) {
+    try {
+      const userRecord = await auth.getUserByEmail(searchQuery);
+      const profileSnap = await db.collection("playerProfiles").doc(userRecord.uid).get();
+      results.push({
+        uid: userRecord.uid,
+        email: userRecord.email,
+        displayName: userRecord.displayName,
+        aiTokens: (profileSnap.exists ? profileSnap.get("aiTokens") : 0) ?? 0,
+      });
+    } catch {
+      // no user found
+    }
+  } else {
+    try {
+      const userRecord = await auth.getUser(searchQuery);
+      const profileSnap = await db.collection("playerProfiles").doc(userRecord.uid).get();
+      results.push({
+        uid: userRecord.uid,
+        email: userRecord.email,
+        displayName: userRecord.displayName,
+        aiTokens: (profileSnap.exists ? profileSnap.get("aiTokens") : 0) ?? 0,
+      });
+    } catch {
+      // no user found
+    }
+  }
+
+  return { users: results };
 });
