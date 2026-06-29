@@ -23,9 +23,8 @@ import {
   Textarea,
   Switch,
   Title,
-  VisuallyHidden,
 } from "@mantine/core";
-import { IconAlertCircle, IconCircleCheck, IconClock, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
+import { IconAlertCircle, IconCircleCheck, IconMapPin, IconPlus, IconQrcode, IconSparkles, IconTrash, IconX } from "@tabler/icons-react";
 import { useMediaQuery } from "@mantine/hooks";
 import { kwizTokens } from "../../platform/theme/kwizTokens";
 import { firebaseConfigError } from "../../platform/firebase/firebase";
@@ -49,10 +48,7 @@ const now = new Date();
 const plusDays = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
 type WizardStep = 1 | 2 | 3 | 4 | 5;
-type CreatorPreviewPhase = "back" | "pre_countdown" | "front";
 type RoutePreviewMode = RouteMode;
-
-const PREVIEW_PRE_REVEAL_SECONDS = 3;
 const previewChoiceBorderColors = kwizTokens.previewChoiceBorders;
 
 function previewChoiceCardStyle(index: number): CSSProperties {
@@ -212,10 +208,6 @@ export function CreateQuizPage(): JSX.Element {
   const [choiceDraft, setChoiceDraft] = useState("");
   const [choiceDraftIsCorrect, setChoiceDraftIsCorrect] = useState(false);
   const [choiceDraftVisible, setChoiceDraftVisible] = useState(true);
-  const [questionPreviewActive, setQuestionPreviewActive] = useState(false);
-  const [previewPhase, setPreviewPhase] = useState<CreatorPreviewPhase>("front");
-  const [previewCountdown, setPreviewCountdown] = useState<number | null>(null);
-  const [previewEditing, setPreviewEditing] = useState(false);
   const [coordinatesOverlayOpen, setCoordinatesOverlayOpen] = useState(false);
   const [addMultipleWaypointsMode, setAddMultipleWaypointsMode] = useState(false);
   const [routeMapViewport, setRouteMapViewport] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
@@ -224,6 +216,15 @@ export function CreateQuizPage(): JSX.Element {
   const [drawingLegIndex, setDrawingLegIndex] = useState<number | null>(null);
   const [drawingLegPoints, setDrawingLegPoints] = useState<Array<{ lat: number; lng: number }>>([]);
   const [manualDrawError, setManualDrawError] = useState<string | null>(null);
+  const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
+  const focusWaypointNameAfterAddRef = useRef<number | null>(null);
+  const pendingSelectNewestWaypointRef = useRef(false);
+  const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
+
+  const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
+  const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
+
   const { openAiGenerator, renderModals: renderAiModals } = useAiGenerator({
     currentQuestionType: currentQuestion?.questionType,
     currentQuestionConfig: currentQuestion?.config,
@@ -233,16 +234,6 @@ export function CreateQuizPage(): JSX.Element {
       updateCurrentQuestion({ ...currentQuestion, ...question });
     },
   });
-  const choiceDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const previewSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const previewEditorRef = useRef<HTMLDivElement | null>(null);
-  const waypointNameInputRef = useRef<HTMLInputElement | null>(null);
-  const focusWaypointNameAfterAddRef = useRef<number | null>(null);
-  const pendingSelectNewestWaypointRef = useRef(false);
-  const multipleChoiceStateCacheRef = useRef<Record<string, { choices: string[]; correctChoiceIndexes: number[] }>>({});
-
-  const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
-  const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
 
   const displayedAccessCode = input.isPublic ? "" : input.accessCode ?? "";
   const shareLink = useMemo(() => {
@@ -647,51 +638,6 @@ export function CreateQuizPage(): JSX.Element {
     setStep((prev) => (prev > 1 ? ((prev - 1) as WizardStep) : prev));
   }
 
-  function setPreviewEditingFromFocus(): void {
-    setPreviewEditing(true);
-  }
-
-  function clearPreviewEditingFromBlur(): void {
-    requestAnimationFrame(() => {
-      const activeElement = document.activeElement;
-      setPreviewEditing(Boolean(previewEditorRef.current?.contains(activeElement)));
-    });
-  }
-
-  const questionPositions = useMemo(
-    () =>
-      input.waypoints.flatMap((waypoint, waypointIndex) =>
-        waypoint.questions.map((_, questionIndex) => ({ waypointIndex, questionIndex }))
-      ),
-    [input.waypoints]
-  );
-  const currentQuestionPositionIndex = questionPositions.findIndex(
-    (position) =>
-      position.waypointIndex === selectedWaypointIndex &&
-      position.questionIndex === selectedQuestionIndex
-  );
-  const hasPreviousQuestion = currentQuestionPositionIndex > 0;
-  const hasNextQuestion =
-    currentQuestionPositionIndex >= 0 &&
-    currentQuestionPositionIndex < questionPositions.length - 1;
-  function goToPreviousQuestion(): void {
-    if (!hasPreviousQuestion) return;
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    const previous = questionPositions[currentQuestionPositionIndex - 1];
-    if (!previous) return;
-    setSelectedWaypointIndex(previous.waypointIndex);
-    setSelectedQuestionIndex(previous.questionIndex);
-  }
-
-  function goToNextQuestion(): void {
-    if (!hasNextQuestion) return;
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    const next = questionPositions[currentQuestionPositionIndex + 1];
-    if (!next) return;
-    setSelectedWaypointIndex(next.waypointIndex);
-    setSelectedQuestionIndex(next.questionIndex);
-  }
-
   function selectWaypoint(index: number): void {
     persistChoiceDraft({ keepDraftVisible: false, refocus: false });
     setDrawingLegIndex(null);
@@ -761,28 +707,6 @@ export function CreateQuizPage(): JSX.Element {
     cancelManualLegDrawing();
   }, [cancelManualLegDrawing, drawingLegIndex, drawingLegPoints, input, t]);
 
-  function onPreviewPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
-    previewSwipeStartRef.current = { x: event.clientX, y: event.clientY };
-  }
-
-  function onPreviewPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
-    if (questionPreviewActive) return;
-    if (previewEditing) return;
-    const start = previewSwipeStartRef.current;
-    previewSwipeStartRef.current = null;
-    if (!start) return;
-
-    const deltaX = event.clientX - start.x;
-    const deltaY = event.clientY - start.y;
-    if (Math.abs(deltaX) < 60 || Math.abs(deltaY) > 40) return;
-
-    if (deltaX < 0) {
-      goToNextQuestion();
-      return;
-    }
-    goToPreviousQuestion();
-  }
-
   useEffect(() => {
     if (!currentQuestion || currentQuestion.questionType !== "multiple_choice") {
       setChoiceDraft("");
@@ -812,12 +736,6 @@ export function CreateQuizPage(): JSX.Element {
     if (selectedQuestionIndex >= currentWaypoint.questions.length) {
       setSelectedQuestionIndex(Math.max(0, currentWaypoint.questions.length - 1));
     }
-
-    setDragQuestionIndex(null);
-    setDragOverQuestionIndex(null);
-    setMoveMode(false);
-    setMoveModePulse(false);
-    setFocusedQuestionIndex(null);
   }, [currentWaypoint, selectedWaypointIndex, selectedQuestionIndex]);
 
   useEffect(() => {
@@ -937,9 +855,6 @@ export function CreateQuizPage(): JSX.Element {
     (step === 4 && hasQuestionData) ||
     step === 5;
   const canPublishCurrentQuiz = Boolean(result?.editKey) && editingQuizStatus !== "published";
-  const effectivePreviewTimerSeconds =
-    currentQuestion?.config.timerSeconds ?? input.ruleset.questionTimeLimitSeconds ?? null;
-
   const routeMapHeightClassName = coordinatesOverlayOpen
     ? isTwoColumnRouteLayout
       ? "kwiz-map-picker-two-col-expanded"
@@ -975,98 +890,6 @@ export function CreateQuizPage(): JSX.Element {
       },
     });
   }
-
-  function enterQuestionPreview(): void {
-    persistChoiceDraft({ keepDraftVisible: false, refocus: false });
-    setPreviewEditing(false);
-    setQuestionPreviewActive(true);
-    setPreviewPhase("back");
-    setPreviewCountdown(null);
-  }
-
-  function exitQuestionPreview(): void {
-    setQuestionPreviewActive(false);
-    setPreviewPhase("front");
-    setPreviewCountdown(null);
-  }
-
-  function revealPreviewCard(): void {
-    if (!questionPreviewActive) return;
-    if (previewPhase === "pre_countdown") return;
-    if (effectivePreviewTimerSeconds !== null) {
-      setPreviewPhase("pre_countdown");
-      setPreviewCountdown(PREVIEW_PRE_REVEAL_SECONDS);
-      return;
-    }
-    setPreviewPhase("front");
-  }
-
-  function renderQuestionPreviewInput(): JSX.Element {
-    if (!currentQuestion) return <></>;
-
-    if (currentQuestion.questionType === "numeric") {
-      return (
-        <Paper withBorder radius="md" p="sm">
-          <Text c="dimmed">{t("player.numericAnswer")}</Text>
-        </Paper>
-      );
-    }
-
-    if (currentQuestion.questionType === "letter_order") {
-      return (
-        <Paper withBorder radius="md" p="sm">
-          <Text c="dimmed">{t("player.letterOrderAnswer")}</Text>
-        </Paper>
-      );
-    }
-
-    if (currentQuestion.choices.length === 0) {
-      return (
-        <Paper withBorder radius="md" p="sm">
-          <Text c="dimmed">{t("creator.questions.addChoice")}</Text>
-        </Paper>
-      );
-    }
-
-    return (
-      <Stack gap="xs">
-        {currentQuestion.choices.map((choice, index) => (
-          <Group key={`preview-sim-choice-${index}`} wrap="nowrap" align="flex-start">
-            <div className="kwiz-preview-choice-dot" aria-hidden="true" />
-            <Text>{choice}</Text>
-          </Group>
-        ))}
-      </Stack>
-    );
-  }
-
-  useEffect(() => {
-    if (!questionPreviewActive) return;
-    setPreviewPhase("back");
-    setPreviewCountdown(null);
-  }, [questionPreviewActive, selectedWaypointIndex, selectedQuestionIndex]);
-
-  useEffect(() => {
-    if (previewPhase !== "pre_countdown" || previewCountdown === null) return;
-
-    if (previewCountdown <= 0) {
-      setPreviewPhase("front");
-      setPreviewCountdown(null);
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      setPreviewCountdown((previous) => (previous === null ? null : previous - 1));
-    }, 1000);
-
-    return () => clearTimeout(timeout);
-  }, [previewCountdown, previewPhase]);
-
-  useEffect(() => {
-    if (step !== 4 && questionPreviewActive) {
-      exitQuestionPreview();
-    }
-  }, [questionPreviewActive, step]);
 
   const routeLegs = useMemo(() => {
     if (input.waypoints.length < 2) return [];
@@ -1119,7 +942,6 @@ export function CreateQuizPage(): JSX.Element {
   return (
     <div className="kwiz-create-root">
       <Stack gap="md">
-        <VisuallyHidden aria-live="polite">{reorderAnnouncement}</VisuallyHidden>
         <Title order={2}>{t("creator.title")}</Title>
         <Text c="dimmed">{t("creator.step", { current: step, total: 5 })}: {[
           t("creator.steps.identity"),
@@ -1437,75 +1259,6 @@ export function CreateQuizPage(): JSX.Element {
               />
             </SimpleGrid>
 
-            <Card withBorder radius="md">
-              <Stack gap="sm">
-                <Switch
-                  label={t("creator.rules.labelQuestionTimerEnabled")}
-                  checked={input.ruleset.questionTimeLimitSeconds !== null}
-                  onChange={(event) =>
-                    setInput({
-                      ...input,
-                      ruleset: {
-                        ...input.ruleset,
-                        questionTimeLimitSeconds: event.currentTarget.checked ? 30 : null,
-                      },
-                    })
-                  }
-                />
-                {input.ruleset.questionTimeLimitSeconds !== null ? (
-                  <NumberInput
-                    label={t("creator.rules.labelQuestionTimer")}
-                    min={5}
-                    max={600}
-                    value={input.ruleset.questionTimeLimitSeconds}
-                    onChange={(value) =>
-                      setInput({
-                        ...input,
-                        ruleset: {
-                          ...input.ruleset,
-                          questionTimeLimitSeconds: typeof value === "number" ? value : 30,
-                        },
-                      })
-                    }
-                  />
-                ) : null}
-              </Stack>
-            </Card>
-
-            <Card withBorder radius="md">
-              <Stack gap="sm">
-                <Switch
-                  label={t("creator.rules.labelInterQuestionTimerEnabled")}
-                  checked={input.ruleset.interQuestionTimeLimitSeconds !== null}
-                  onChange={(event) =>
-                    setInput({
-                      ...input,
-                      ruleset: {
-                        ...input.ruleset,
-                        interQuestionTimeLimitSeconds: event.currentTarget.checked ? 60 : null,
-                      },
-                    })
-                  }
-                />
-                {input.ruleset.interQuestionTimeLimitSeconds !== null ? (
-                  <NumberInput
-                    label={t("creator.rules.labelInterQuestionTimer")}
-                    min={5}
-                    max={1800}
-                    value={input.ruleset.interQuestionTimeLimitSeconds}
-                    onChange={(value) =>
-                      setInput({
-                        ...input,
-                        ruleset: {
-                          ...input.ruleset,
-                          interQuestionTimeLimitSeconds: typeof value === "number" ? value : 60,
-                        },
-                      })
-                    }
-                  />
-                ) : null}
-              </Stack>
-            </Card>
           </Stack>
         ) : null}
 
@@ -1709,83 +1462,15 @@ export function CreateQuizPage(): JSX.Element {
                     className={isMobilePreviewLayout ? "kwiz-creator-mobile-preview-shell" : undefined}
                   >
                     <Stack gap="sm">
-                      <Group justify="space-between" align="center" wrap="nowrap">
-                        <Text size="sm" fw={600}>{currentWaypoint.name}</Text>
-                        {questionPreviewActive ? (
-                          <Button size="compact-xs" variant="light" color="gray" onClick={exitQuestionPreview}>
-                            {t("creator.questions.previewExit")}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="compact-xs"
-                            variant="light"
-                            color="teal"
-                            onClick={enterQuestionPreview}
-                            disabled={!currentQuestion}
-                          >
-                            {t("creator.questions.previewStart")}
-                          </Button>
-                        )}
-                      </Group>
+                      <Text size="sm" fw={600}>{currentWaypoint.name}</Text>
 
                         <Card
                           withBorder={!isMobilePreviewLayout}
                           radius={isMobilePreviewLayout ? "sm" : "lg"}
                           p={isMobilePreviewLayout ? "sm" : "md"}
-                          className={`kwiz-creator-preview-frame${isMobilePreviewLayout ? " kwiz-creator-preview-frame-mobile" : ""}${previewEditing ? " kwiz-touch-auto" : " kwiz-touch-pan-y"}`}
-                          onPointerDown={onPreviewPointerDown}
-                          onPointerUp={onPreviewPointerUp}
+                          className={isMobilePreviewLayout ? "kwiz-creator-preview-frame-mobile" : "kwiz-creator-preview-frame"}
                         >
-                          <div ref={previewEditorRef}>
                             <Stack gap="sm">
-                              {questionPreviewActive && (previewPhase === "back" || previewPhase === "pre_countdown") ? (
-                                <Paper
-                                  className="kwiz-card-back kwiz-card-back-clickable kwiz-card-back-min"
-                                  withBorder
-                                  radius="md"
-                                  p="md"
-                                  role="button"
-                                  tabIndex={0}
-                                  onClick={revealPreviewCard}
-                                  onKeyDown={(event) => {
-                                    if (event.key !== "Enter" && event.key !== " ") return;
-                                    event.preventDefault();
-                                    revealPreviewCard();
-                                  }}
-                                >
-                                  {previewPhase === "pre_countdown" ? (
-                                    <div className="kwiz-countdown-overlay" aria-live="polite">
-                                      <Text size="xs" c="dimmed">{t("creator.questions.previewCountdownHint")}</Text>
-                                      <Title order={2} className="kwiz-countdown-number">{previewCountdown ?? 0}</Title>
-                                    </div>
-                                  ) : null}
-                                  <Stack align="stretch" justify="center" className="kwiz-card-back-content kwiz-card-back-content-mobile" gap="md">
-                                    <div className="kwiz-card-back-art-shell">
-                                      <img src="/branding/card-backside.png" alt="KwizHero" className="kwiz-card-back-art" />
-                                    </div>
-                                  </Stack>
-                                </Paper>
-                              ) : null}
-
-                              {questionPreviewActive && previewPhase === "front" ? (
-                                <div className="kwiz-reveal-enter">
-                                  <Stack gap="sm">
-                                    <Title order={5}>{currentQuestion?.text || t("creator.questions.labelText")}</Title>
-                                    {effectivePreviewTimerSeconds !== null ? (
-                                      <Badge color="orange" leftSection={<IconClock size={14} />}>
-                                        {`${effectivePreviewTimerSeconds}s`}
-                                      </Badge>
-                                    ) : null}
-                                    {renderQuestionPreviewInput()}
-                                    <Group>
-                                      <Button disabled>{t("player.submitAnswer")}</Button>
-                                    </Group>
-                                  </Stack>
-                                </div>
-                              ) : null}
-
-                              {!questionPreviewActive ? (
-                                <>
                                   <Group justify="space-between" align="flex-start" wrap="nowrap">
                                     <Textarea
                                       autosize
@@ -1794,8 +1479,6 @@ export function CreateQuizPage(): JSX.Element {
                                       size="lg"
                                       placeholder={t("creator.questions.labelText")}
                                       value={currentQuestion.text}
-                                      onFocus={setPreviewEditingFromFocus}
-                                      onBlur={clearPreviewEditingFromBlur}
                                       onChange={(e) => updateCurrentQuestion({ ...currentQuestion, text: e.currentTarget.value })}
                                       styles={{ input: { fontSize: 24, fontWeight: 600, lineHeight: 1.3 } }}
                                       className="kwiz-creator-flex-1"
@@ -1810,12 +1493,6 @@ export function CreateQuizPage(): JSX.Element {
                                       {t("creator.questions.generateWithAi")}
                                     </Button>
                                   </Group>
-
-                                  {currentQuestion.config.timerSeconds !== null ? (
-                                    <Badge color="orange" leftSection={<IconClock size={14} />}>
-                                      {`${currentQuestion.config.timerSeconds}s`}
-                                    </Badge>
-                                  ) : null}
 
                                   {currentQuestion.questionType === "multiple_choice" ? (
                                     <SimpleGrid cols={2} spacing="sm">
@@ -1845,11 +1522,8 @@ export function CreateQuizPage(): JSX.Element {
                                               variant="unstyled"
                                               value={choice}
                                               placeholder={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + index) })}
-                                              onFocus={setPreviewEditingFromFocus}
-                                              onBlur={() => {
-                                                handleChoiceBlur(index);
-                                                clearPreviewEditingFromBlur();
-                                              }}
+                                              
+                                              onBlur={() => handleChoiceBlur(index)}
                                               onChange={(e) => updateChoice(index, e.currentTarget.value)}
                                               onKeyDown={(event) => {
                                                 if (event.key !== "Enter") return;
@@ -1895,14 +1569,13 @@ export function CreateQuizPage(): JSX.Element {
                                               variant="unstyled"
                                               value={choiceDraft}
                                               placeholder={t("creator.questions.choiceLabel", { label: String.fromCharCode(65 + currentQuestion.choices.length) })}
-                                              onFocus={setPreviewEditingFromFocus}
+                                              
                                               onBlur={() => {
                                                 if (choiceDraft.trim().length > 0) {
                                                   persistChoiceDraft({ keepDraftVisible: true, refocus: false });
                                                 } else {
                                                   setChoiceDraftVisible(false);
                                                 }
-                                                clearPreviewEditingFromBlur();
                                               }}
                                               onChange={(event) => setChoiceDraft(event.currentTarget.value)}
                                               onKeyDown={(event) => {
@@ -1944,8 +1617,8 @@ export function CreateQuizPage(): JSX.Element {
                                     <NumberInput
                                       label={t("creator.questions.numericAnswer")}
                                       value={currentQuestion.numericAnswer ?? undefined}
-                                      onFocus={setPreviewEditingFromFocus}
-                                      onBlur={clearPreviewEditingFromBlur}
+                                      
+                                      
                                       onChange={(value) =>
                                         updateCurrentQuestion({
                                           ...currentQuestion,
@@ -1959,8 +1632,8 @@ export function CreateQuizPage(): JSX.Element {
                                     <TextInput
                                       label={t("creator.questions.letterOrderAnswer")}
                                       value={currentQuestion.letterOrderAnswer ?? ""}
-                                      onFocus={setPreviewEditingFromFocus}
-                                      onBlur={clearPreviewEditingFromBlur}
+                                      
+                                      
                                       onChange={(e) =>
                                         updateCurrentQuestion({
                                           ...currentQuestion,
@@ -1969,10 +1642,7 @@ export function CreateQuizPage(): JSX.Element {
                                       }
                                     />
                                   ) : null}
-                                </>
-                              ) : null}
                             </Stack>
-                          </div>
                         </Card>
 
                       {currentQuestionIssue ? (
@@ -2002,36 +1672,6 @@ export function CreateQuizPage(): JSX.Element {
                         value={currentQuestion.questionType}
                         onChange={(value) => changeQuestionType(value as QuestionType)}
                       />
-                      <Switch
-                        label={t("creator.questions.enableTimer")}
-                        checked={currentQuestion.config.timerSeconds !== null}
-                        onChange={(event) =>
-                          updateCurrentQuestion({
-                            ...currentQuestion,
-                            config: {
-                              ...currentQuestion.config,
-                              timerSeconds: event.currentTarget.checked ? 30 : null,
-                            },
-                          })
-                        }
-                      />
-                      {currentQuestion.config.timerSeconds !== null ? (
-                        <NumberInput
-                          label={t("creator.questions.labelTimerSeconds")}
-                          min={5}
-                          max={600}
-                          value={currentQuestion.config.timerSeconds}
-                          onChange={(value) =>
-                            updateCurrentQuestion({
-                              ...currentQuestion,
-                              config: {
-                                ...currentQuestion.config,
-                                timerSeconds: typeof value === "number" ? value : 30,
-                              },
-                            })
-                          }
-                        />
-                      ) : null}
                       {currentQuestion.questionType === "numeric" ? (
                         <NumberInput
                           label={t("creator.questions.numericTolerance")}
@@ -2150,18 +1790,6 @@ export function CreateQuizPage(): JSX.Element {
                   {t("creator.publish.reviewQuestions", {
                     count: input.waypoints.reduce((sum, w) => sum + w.questions.length, 0),
                   })}
-                </List.Item>
-                <List.Item>
-                  {input.ruleset.questionTimeLimitSeconds !== null
-                    ? t("creator.publish.reviewTimer", { seconds: input.ruleset.questionTimeLimitSeconds })
-                    : t("creator.publish.reviewTimerOff")}
-                </List.Item>
-                <List.Item>
-                  {input.ruleset.interQuestionTimeLimitSeconds !== null
-                    ? t("creator.publish.reviewBetweenTimer", {
-                        seconds: input.ruleset.interQuestionTimeLimitSeconds,
-                      })
-                    : t("creator.publish.reviewBetweenTimerOff")}
                 </List.Item>
                 <List.Item>
                   {t("creator.publish.reviewRevealMode", { mode: input.ruleset.revealMode })}
