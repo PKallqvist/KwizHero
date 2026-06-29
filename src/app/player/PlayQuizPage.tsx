@@ -55,6 +55,7 @@ import { distanceMeters, formatDistanceMeters, getCurrentCoordinates, routeDista
 import { evaluateBadgeUnlocks, type BadgeUnlockEvent, type BadgeLocale } from "../../domain/badges";
 import type { AnswerResult, QuizSummary, QuizWalk, QuizWalkQuestion, QuizWalkWaypoint } from "../../domain/types";
 import type { Coordinates } from "../../platform/map/geolocation";
+import { QuestComplete } from "./QuestComplete";
 
 type QuestionCardPhase = "back" | "pre_countdown" | "front";
 
@@ -260,15 +261,10 @@ export function PlayQuizPage(): JSX.Element {
   const [sessionComplete, setSessionComplete] = useState(false);
   const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
   const [currentScore, setCurrentScore] = useState(0);
-  const [completionRevealOpen, setCompletionRevealOpen] = useState(false);
-  const [completionToast, setCompletionToast] = useState<string | null>(null);
   const [tieredBadgeQueue, setTieredBadgeQueue] = useState<BadgeUnlockEvent[]>([]);
   const [activeTieredBadgeToast, setActiveTieredBadgeToast] = useState<BadgeUnlockEvent | null>(null);
   const [discoveryBadgeQueue, setDiscoveryBadgeQueue] = useState<DiscoveryQueueItem[]>([]);
   const [activeDiscoveryBadge, setActiveDiscoveryBadge] = useState<DiscoveryQueueItem | null>(null);
-  const [animatedXpEarned, setAnimatedXpEarned] = useState(0);
-  const [completionReplayKey, setCompletionReplayKey] = useState(0);
-  const [countdownNow, setCountdownNow] = useState(Date.now());
   const [questionStartMs, setQuestionStartMs] = useState<number | null>(null);
   const [questionDeadlineMs, setQuestionDeadlineMs] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
@@ -581,10 +577,6 @@ export function PlayQuizPage(): JSX.Element {
     setWaypointClearedState(null);
     setCorrectAnswersCount(0);
     setCurrentScore(0);
-    setCompletionRevealOpen(false);
-    setAnimatedXpEarned(0);
-    setCompletionReplayKey(0);
-    setCountdownNow(Date.now());
   }
 
   async function startDebugQuiz(): Promise<void> {
@@ -630,10 +622,6 @@ export function PlayQuizPage(): JSX.Element {
     setWaypointClearedState(null);
     setCorrectAnswersCount(0);
     setCurrentScore(0);
-    setCompletionRevealOpen(false);
-    setAnimatedXpEarned(0);
-    setCompletionReplayKey(0);
-    setCountdownNow(Date.now());
   }
 
   const setMockLocationToWaypoint = useCallback((waypointIndex: number): void => {
@@ -1104,34 +1092,6 @@ export function PlayQuizPage(): JSX.Element {
   const journeyMode = showGameplay && lockedWaypointIndex === null && !waypointClearedMode;
   const cardMode = showGameplay && lockedWaypointIndex !== null && currentQuestion;
   const completionMode = summary?.revealMode ?? "instant";
-  const completionDateMs = useMemo(
-    () => (summary?.revealAt ? new Date(summary.revealAt).getTime() : null),
-    [summary?.revealAt]
-  );
-  const completionDate = completionDateMs !== null ? new Date(completionDateMs) : null;
-  const countdownMs = completionDateMs !== null ? Math.max(0, completionDateMs - countdownNow) : 0;
-  const countdownDays = Math.floor(countdownMs / (1000 * 60 * 60 * 24));
-  const countdownHours = Math.floor((countdownMs / (1000 * 60 * 60)) % 24);
-  const countdownMinutes = Math.floor((countdownMs / (1000 * 60)) % 60);
-
-  const confettiParticles = useMemo(() => {
-    if (!showCompletionScreen || completionMode === "scheduled") return [];
-    return Array.from({ length: 36 }).map((_, index) => {
-      const palette = ["#F6C453", "#1D4ED8", "#34d399", "#f472b6", "#c084fc"];
-      const color = palette[Math.floor(Math.random() * palette.length)] ?? "#F6C453";
-      return {
-        id: `confetti-${completionReplayKey}-${index}`,
-        left: Math.random() * 100,
-        size: 4 + Math.random() * 4,
-        delay: Math.random() * 160,
-        duration: 1800 + Math.random() * 1400,
-        drift: -30 + Math.random() * 60,
-        rotate: -220 + Math.random() * 440,
-        color,
-      };
-    });
-  }, [completionMode, completionReplayKey, showCompletionScreen]);
-
   const completedWaypointIndexes = useMemo(() => {
     if (!quizWalk) return new Set<number>();
     const completed = new Set<number>();
@@ -1204,72 +1164,6 @@ export function PlayQuizPage(): JSX.Element {
     setActiveDiscoveryBadge(nextDiscovery ?? null);
     setDiscoveryBadgeQueue(remaining);
   }, [activeDiscoveryBadge, discoveryBadgeQueue]);
-
-  useEffect(() => {
-    if (!showCompletionScreen) return;
-    setAnimatedXpEarned(0);
-
-    const delay = window.setTimeout(() => {
-      const startedAt = performance.now();
-      const durationMs = 800;
-
-      const tick = (timestamp: number) => {
-        const elapsed = Math.min(timestamp - startedAt, durationMs);
-        const progress = elapsed / durationMs;
-        const eased = 1 - Math.pow(1 - progress, 3);
-        setAnimatedXpEarned(Math.round(xpEarned * eased));
-        if (elapsed < durationMs) {
-          requestAnimationFrame(tick);
-        }
-      };
-
-      requestAnimationFrame(tick);
-    }, 400);
-
-    return () => window.clearTimeout(delay);
-  }, [completionReplayKey, showCompletionScreen, xpEarned]);
-
-  useEffect(() => {
-    if (!showCompletionScreen || completionMode !== "scheduled" || completionDateMs === null) return;
-
-    setCountdownNow(Date.now());
-    const interval = window.setInterval(() => {
-      setCountdownNow(Date.now());
-    }, 1000);
-
-    return () => window.clearInterval(interval);
-  }, [completionDateMs, completionMode, showCompletionScreen]);
-
-  useEffect(() => {
-    if (!completionToast) return;
-    const timeout = window.setTimeout(() => setCompletionToast(null), 2200);
-    return () => window.clearTimeout(timeout);
-  }, [completionToast]);
-
-  const scheduledRevealFormatted = completionDate
-    ? new Intl.DateTimeFormat("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(completionDate).replace(",", " at")
-    : "";
-
-  function completionPrimaryAction(): void {
-    if (!showCompletionScreen) return;
-    if (completionMode === "scheduled") {
-      setCompletionToast("We'll remind you when results are ready");
-      return;
-    }
-    setCompletionRevealOpen(true);
-  }
-
-  function replayCompletionAnimation(): void {
-    if (!showCompletionScreen) return;
-    setCompletionReplayKey((previous) => previous + 1);
-  }
 
   // Clear session when component unmounts
   useEffect(() => {
@@ -1369,134 +1263,18 @@ export function PlayQuizPage(): JSX.Element {
         ) : null}
 
         {showCompletionScreen && summary && quizWalk ? (
-          <div className={`kwiz-completion-screen is-${completionMode}`}>
-            <div key={`completion-replay-${completionReplayKey}`} className="kwiz-completion-content">
-              <div className="kwiz-completion-hero">
-                <span className="kwiz-completion-glow" aria-hidden="true" />
-                {confettiParticles.map((particle) => (
-                  <span
-                    key={particle.id}
-                    className="kwiz-completion-confetti"
-                    style={{
-                      left: `${particle.left}%`,
-                      width: `${particle.size}px`,
-                      height: `${particle.size}px`,
-                      backgroundColor: particle.color,
-                      animationDelay: `${particle.delay}ms`,
-                      animationDuration: `${particle.duration}ms`,
-                      ["--kwiz-confetti-drift" as string]: `${particle.drift}px`,
-                      ["--kwiz-confetti-rotate" as string]: `${particle.rotate}deg`,
-                    }}
-                    aria-hidden="true"
-                  />
-                ))}
-                <button
-                  type="button"
-                  className="kwiz-completion-icon-ring"
-                  onClick={replayCompletionAnimation}
-                  aria-label="Replay celebration animation"
-                >
-                  <span className="kwiz-completion-icon">
-                    {completionMode === "instant" ? "🏆" : completionMode === "on_completion" ? "🎯" : "⏳"}
-                  </span>
-                </button>
-              </div>
-
-              <Text className="kwiz-completion-mode-label kwiz-completion-enter delay-1">
-                {completionMode === "on_completion" ? "JOURNEY COMPLETE!" : "QUEST COMPLETE!"}
-              </Text>
-              <Title order={2} className="kwiz-completion-title kwiz-completion-enter delay-2">
-                {completionMode === "instant"
-                  ? `${summary.title} conquered`
-                  : completionMode === "on_completion"
-                    ? "All waypoints reached"
-                    : "Now the wait begins…"}
-              </Title>
-              {completionMode === "scheduled" ? (
-                <Text className="kwiz-completion-subtext kwiz-completion-enter delay-3">
-                  You've answered all questions. Results will be revealed on the scheduled date.
-                </Text>
-              ) : null}
-
-              <div className="kwiz-completion-xp-pill">⚡ +{animatedXpEarned.toLocaleString("sv-SE")} XP earned</div>
-
-              {completionMode !== "scheduled" ? (
-                <div className="kwiz-completion-stats">
-                  <div className="kwiz-completion-stat kwiz-completion-stat-enter" style={{ animationDelay: "600ms" }}>
-                    <span className="kwiz-completion-stat-value">
-                      {completionMode === "instant" ? `${correctAnswersCount}/${totalQuestions}` : totalQuestions}
-                    </span>
-                    <span className="kwiz-completion-stat-label">
-                      {completionMode === "instant" ? "Correct" : "Questions"}
-                    </span>
-                  </div>
-                  <div className="kwiz-completion-stat kwiz-completion-stat-enter" style={{ animationDelay: "660ms" }}>
-                    <span className="kwiz-completion-stat-value">{(totalRouteDistance / 1000).toFixed(1)}</span>
-                    <span className="kwiz-completion-stat-label">km walked</span>
-                  </div>
-                  <div className="kwiz-completion-stat kwiz-completion-stat-enter" style={{ animationDelay: "720ms" }}>
-                    <span className="kwiz-completion-stat-value">🔥 {updatedStreak}</span>
-                    <span className="kwiz-completion-stat-label">Streak</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="kwiz-completion-countdown">
-                  <div className="kwiz-completion-countdown-card" key={`days-${countdownDays}`}>
-                    <span className="kwiz-completion-countdown-value">{String(countdownDays).padStart(2, "0")}</span>
-                    <span className="kwiz-completion-countdown-label">DAYS</span>
-                  </div>
-                  <div className="kwiz-completion-countdown-card" key={`hours-${countdownHours}`}>
-                    <span className="kwiz-completion-countdown-value">{String(countdownHours).padStart(2, "0")}</span>
-                    <span className="kwiz-completion-countdown-label">HRS</span>
-                  </div>
-                  <div className="kwiz-completion-countdown-card" key={`minutes-${countdownMinutes}`}>
-                    <span className="kwiz-completion-countdown-value">{String(countdownMinutes).padStart(2, "0")}</span>
-                    <span className="kwiz-completion-countdown-label">MIN</span>
-                  </div>
-                </div>
-              )}
-
-              <div className={`kwiz-completion-reveal-card is-${completionMode}`}>
-                <div className="kwiz-completion-reveal-icon">
-                  {completionMode === "instant" ? "✅" : completionMode === "on_completion" ? "🎯" : "📅"}
-                </div>
-                <Text className="kwiz-completion-reveal-title">
-                  {completionMode === "instant"
-                    ? "Results revealed as you played"
-                    : completionMode === "on_completion"
-                      ? "Results are ready!"
-                      : "Scheduled reveal"}
-                </Text>
-                <Text className="kwiz-completion-reveal-body">
-                  {completionMode === "instant"
-                    ? `You saw each answer right after answering. Final score: ${correctAnswersCount}/${totalQuestions}`
-                    : completionMode === "on_completion"
-                      ? completionRevealOpen
-                        ? `Final score: ${currentScore}/${totalQuestions}. Your results are now revealed.`
-                        : "The quiz has ended and your answers have been scored. Tap below to see how you did."
-                      : `Results unlock on ${scheduledRevealFormatted}. Come back then to see how you did.`}
-                </Text>
-              </div>
-
-              <div className="kwiz-completion-cta-stack">
-                <Button
-                  className={`kwiz-completion-primary is-${completionMode}`}
-                  onClick={completionPrimaryAction}
-                >
-                  {completionMode === "instant"
-                    ? "🏆 See full results"
-                    : completionMode === "on_completion"
-                      ? completionRevealOpen
-                        ? "🎯 Results revealed"
-                        : "🎯 Reveal my results"
-                      : "🔔 Notify me when ready"}
-                </Button>
-                <Button variant="outline" className="kwiz-completion-secondary" onClick={() => navigate("/")}>
-                  Back to home
-                </Button>
-              </div>
-            </div>
-          </div>
+          <QuestComplete
+            quizTitle={summary.title}
+            revealMode={completionMode}
+            correctCount={correctAnswersCount}
+            totalQuestions={totalQuestions}
+            waypointsVisited={completedWaypointIndexes.size}
+            totalWaypoints={quizWalk.waypoints.length}
+            xpEarned={xpEarned}
+            streak={updatedStreak}
+            distanceKm={totalRouteDistance / 1000}
+            onDismiss={() => navigate("/")}
+          />
         ) : null}
 
         {waypointClearedMode && waypointClearedState ? (
@@ -1838,7 +1616,6 @@ export function PlayQuizPage(): JSX.Element {
         ) : null}
 
       </Stack>
-      {completionToast ? <div className="kwiz-completion-toast">{completionToast}</div> : null}
       {activeTieredBadgeToast ? (
         <button
           type="button"

@@ -1745,6 +1745,205 @@ body {
   transform-origin: 50% 45%;
 }
 
+/* quest complete celebration flow */
+.kwiz-quest-root {
+  min-height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px));
+  background: var(--kwiz-page-bg);
+  color: var(--kwiz-text);
+  overflow: hidden;
+}
+
+.kwiz-quest-step {
+  min-height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px 24px 24px;
+  text-align: center;
+  animation: kwiz-quest-fade-in 400ms ease-out;
+  cursor: pointer;
+}
+
+@keyframes kwiz-quest-fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.kwiz-quest-headline {
+  color: var(--kwiz-gold);
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.kwiz-quest-quiz-name {
+  color: var(--kwiz-text);
+  font-size: 18px;
+  max-width: 320px;
+}
+
+.kwiz-quest-xp-pill {
+  background: color-mix(in srgb, var(--kwiz-gold) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kwiz-gold) 20%, transparent);
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--kwiz-gold);
+}
+
+.kwiz-quest-icon-ring {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--kwiz-gold) 85%, white), var(--kwiz-gold));
+  border: 1px solid color-mix(in srgb, var(--kwiz-gold) 55%, transparent);
+  animation: trophy-in 500ms ease-out both;
+}
+
+.kwiz-quest-glow {
+  background: radial-gradient(circle, color-mix(in srgb, var(--kwiz-gold) 90%, transparent) 0%, color-mix(in srgb, var(--kwiz-gold) 5%, transparent) 70%);
+}
+
+.kwiz-quest-continue {
+  margin-top: auto;
+  color: var(--kwiz-text-muted);
+  font-size: 13px;
+}
+
+.kwiz-quest-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--kwiz-text-muted);
+  font-weight: 700;
+}
+
+.kwiz-quest-map {
+  width: 100%;
+  max-width: 340px;
+  padding: 24px 0;
+  background: url("/branding/treasure-map.jpg") center / cover no-repeat;
+  border-radius: 12px;
+  opacity: 0.85;
+}
+
+.kwiz-quest-path-svg {
+  width: 100%;
+  height: auto;
+}
+
+.kwiz-quest-path-line {
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: kwiz-quest-draw-path 2s ease-out forwards;
+}
+
+@keyframes kwiz-quest-draw-path {
+  to { stroke-dashoffset: 0; }
+}
+
+.kwiz-quest-waypoint-dot {
+  opacity: 0;
+  animation: kwiz-quest-dot-appear 300ms ease-out forwards;
+}
+
+@keyframes kwiz-quest-dot-appear {
+  from { opacity: 0; transform: scale(0); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.kwiz-quest-x-mark {
+  opacity: 0;
+  animation: kwiz-quest-dot-appear 400ms ease-out forwards;
+  animation-delay: 1.8s;
+}
+
+.kwiz-quest-journey-stats {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+}
+
+.kwiz-quest-journey-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.kwiz-quest-journey-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--kwiz-text);
+}
+
+.kwiz-quest-journey-stat-label {
+  font-size: 11px;
+  color: var(--kwiz-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.kwiz-quest-score-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.kwiz-quest-score-number {
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--kwiz-gold);
+}
+
+.kwiz-quest-score-divider {
+  font-size: 36px;
+  color: var(--kwiz-text-muted);
+}
+
+.kwiz-quest-score-total {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--kwiz-text-muted);
+}
+
+.kwiz-quest-score-percent {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--kwiz-text-muted);
+}
+
+.kwiz-quest-tier-phrase {
+  color: var(--kwiz-gold);
+  font-size: 24px;
+}
+
+.kwiz-quest-streak {
+  font-size: 14px;
+  color: var(--kwiz-text-muted);
+}
+
+.kwiz-quest-cta {
+  cursor: default;
+}
+
+.kwiz-quest-cta-icon {
+  width: 72px;
+  height: 72px;
+  background: color-mix(in srgb, var(--kwiz-blue) 20%, transparent);
+  border-color: color-mix(in srgb, var(--kwiz-blue) 30%, transparent);
+}
+
+.kwiz-quest-cta-title {
+  color: var(--kwiz-text);
+}
+
 .kwiz-adventure-shell {
   font-family: Inter, Nunito, "Segoe UI", sans-serif;
   width: 100%;
