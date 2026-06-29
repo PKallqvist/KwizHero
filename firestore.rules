@@ -22,6 +22,9 @@ service cloud.firestore {
       allow update: if request.auth != null
         && request.auth.uid == resource.data.creatorUid
         && request.resource.data.creatorUid == resource.data.creatorUid;
+
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.creatorUid;
     }
 
     match /quizSecrets/{quizId} {
@@ -45,6 +48,7 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isQuizOwner(quizId);
       allow update: if isQuizOwner(quizId);
+      allow delete: if isQuizOwner(quizId);
     }
 
     match /quizzes/{quizId}/waypoints/{waypointId} {

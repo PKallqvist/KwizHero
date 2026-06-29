@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import QRCode from "qrcode";
 import {
   ActionIcon,
@@ -40,6 +40,7 @@ import {
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
 import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
+import { useAuth } from "../../platform/context/AuthContext";
 import { CompactStepper } from "./components/CompactStepper";
 import { WaypointPicker, buildAnchoredManualLegPoints } from "./components/WaypointMapEditor";
 import { useAiGenerator } from "./components/AiGeneratorModals";
@@ -158,6 +159,7 @@ function getQuestionValidationIssue(question: DraftQuestionInput): string | null
 
 export function CreateQuizPage(): JSX.Element {
   const { t, i18n } = useTranslation();
+  const { isCreator, loading: authLoading } = useAuth();
   const [searchParams] = useSearchParams();
   const editingQuizId = (searchParams.get("quizId") ?? "").trim();
   const isEditingExistingQuiz = editingQuizId.length > 0;
@@ -265,10 +267,6 @@ export function CreateQuizPage(): JSX.Element {
         const editable = await getEditableQuizDraft(editingQuizId);
         if (!mounted) return;
         setEditingQuizStatus(editable.status);
-        if (editable.status === "published") {
-          setError(t("creator.publish.editNotAllowedPublished"));
-          return;
-        }
         setInput(editable.input);
         setSelectedWaypointIndex(0);
         setSelectedQuestionIndex(0);
@@ -597,10 +595,6 @@ export function CreateQuizPage(): JSX.Element {
     setSavingDraft(true);
     try {
       if (isEditingExistingQuiz) {
-        if (editingQuizStatus === "published") {
-          setError(t("creator.publish.editNotAllowedPublished"));
-          return;
-        }
         await updateQuizDraft(editingQuizId, input);
         setResult((previous) => ({
           quizId: editingQuizId,
@@ -939,6 +933,10 @@ export function CreateQuizPage(): JSX.Element {
     [routeLegs]
   );
 
+  if (!authLoading && !isCreator) {
+    return <Navigate to="/login" replace />;
+  }
+
   return (
     <div className="kwiz-create-root">
       <Stack gap="md">
@@ -955,9 +953,6 @@ export function CreateQuizPage(): JSX.Element {
             <Stack gap={4}>
               <Text size="sm" fw={600}>{t("creator.publish.editingBannerTitle")}</Text>
               <Text size="sm">{t("creator.publish.editingBannerBody", { quizId: editingQuizId })}</Text>
-              {editingQuizStatus === "published" ? (
-                <Text size="sm" c="red">{t("creator.publish.editNotAllowedPublished")}</Text>
-              ) : null}
               <Group>
                 <Button component={Link} to="/my-quizzes" variant="subtle" size="xs">
                   {t("creator.publish.backToMyQuizzes")}
@@ -1847,7 +1842,7 @@ export function CreateQuizPage(): JSX.Element {
               <Button
                 variant="light"
                 onClick={onCreate}
-                disabled={Boolean(firebaseConfigError) || loadingEditableQuiz || editingQuizStatus === "published"}
+                disabled={Boolean(firebaseConfigError) || loadingEditableQuiz}
                 loading={savingDraft}
               >
                 {t("creator.publish.saveDraftChanges")}

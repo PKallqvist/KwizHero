@@ -6,6 +6,8 @@ import {
   IconBooks,
   IconHome2,
   IconLanguage,
+  IconLogin,
+  IconLogout,
   IconMapPin,
   IconMenu2,
   IconMoonStars,
@@ -15,6 +17,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { QuizSessionProvider, useQuizSession } from "./platform/context/QuizSessionContext";
+import { AuthProvider, useAuth } from "./platform/context/AuthContext";
 
 const CreateQuizPage = lazy(async () => {
   const module = await import("./app/creator/CreateQuizPage");
@@ -46,10 +49,16 @@ const PlayerProfilePage = lazy(async () => {
   return { default: module.PlayerProfilePage };
 });
 
+const LoginPage = lazy(async () => {
+  const module = await import("./app/auth/LoginPage");
+  return { default: module.LoginPage };
+});
+
 function BottomBarAndDrawer(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const { session, profile } = useQuizSession();
+  const { isCreator, user, signOut } = useAuth();
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
@@ -188,6 +197,30 @@ function BottomBarAndDrawer(): JSX.Element {
                     <span className="kwiz-drawer-sublabel">{t("player.comingSoon")}</span>
                   </div>
                 </div>
+                {isCreator ? (
+                  <button
+                    type="button"
+                    className="kwiz-drawer-item"
+                    onClick={() => {
+                      void signOut();
+                      closeDrawer();
+                    }}
+                  >
+                    <IconLogout size={20} className="kwiz-drawer-icon" />
+                    <div>
+                      <span className="kwiz-drawer-label">{t("auth.signOut")}</span>
+                      <span className="kwiz-drawer-sublabel">{user?.email ?? user?.displayName}</span>
+                    </div>
+                  </button>
+                ) : (
+                  <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/login")}>
+                    <IconLogin size={20} className="kwiz-drawer-icon" />
+                    <div>
+                      <span className="kwiz-drawer-label">{t("auth.signIn")}</span>
+                      <span className="kwiz-drawer-sublabel">{t("auth.drawerHint")}</span>
+                    </div>
+                  </button>
+                )}
                 <div className="kwiz-drawer-toggle-row">
                   <div className="kwiz-drawer-toggle-left">
                     <IconLanguage size={20} className="kwiz-drawer-icon" />
@@ -258,6 +291,7 @@ export function App(): JSX.Element {
   const isLandingRoute = location.pathname === "/";
 
   return (
+    <AuthProvider>
     <QuizSessionProvider>
       <div className="kwiz-app-root">
         <div className={isPlayRoute ? "kwiz-play-layout" : isLandingRoute ? "kwiz-landing-layout" : "kwiz-standard-layout"}>
@@ -269,11 +303,13 @@ export function App(): JSX.Element {
               <Route path="/play/:quizId" element={<PlayQuizPage />} />
               <Route path="/my-quizzes" element={<UserQuizzesPage />} />
               <Route path="/profile" element={<PlayerProfilePage />} />
+              <Route path="/login" element={<LoginPage />} />
             </Routes>
           </Suspense>
         </div>
         <BottomBarAndDrawer />
       </div>
     </QuizSessionProvider>
+    </AuthProvider>
   );
 }

@@ -16,11 +16,14 @@ import {
   Text,
 } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
-import { IconAlertCircle, IconCheck, IconCopy, IconQrcode, IconTrophy } from "@tabler/icons-react";
+import { IconAlertCircle, IconCheck, IconCopy, IconQrcode, IconTrash, IconTrophy } from "@tabler/icons-react";
+import { useAuth } from "../../platform/context/AuthContext";
 import {
   buildPlayShareLink,
+  deleteQuiz,
   getQuizLeaderboard,
   regenerateQuizAccessCode,
+  getAllQuizzes,
   getUserQuizzes,
   publishQuiz,
 } from "../../platform/firebase/quizRepository";
@@ -28,6 +31,7 @@ import type { LeaderboardEntry, QuizListItem } from "../../domain/types";
 
 export function UserQuizzesPage(): JSX.Element {
   const { t } = useTranslation();
+  const { isAdmin } = useAuth();
   const clipboard = useClipboard({ timeout: 1800 });
   const [lastCopiedQuizId, setLastCopiedQuizId] = useState<string | null>(null);
   const [leaderboardQuiz, setLeaderboardQuiz] = useState<{ id: string; title: string } | null>(null);
@@ -41,6 +45,9 @@ export function UserQuizzesPage(): JSX.Element {
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [publishingQuizId, setPublishingQuizId] = useState<string | null>(null);
   const [regeneratingQuizId, setRegeneratingQuizId] = useState<string | null>(null);
+  const [deletingQuizId, setDeletingQuizId] = useState<string | null>(null);
+  const [confirmDeleteQuiz, setConfirmDeleteQuiz] = useState<{ id: string; title: string } | null>(null);
+  const [adminMode, setAdminMode] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -49,7 +56,7 @@ export function UserQuizzesPage(): JSX.Element {
       setLoadingQuizzes(true);
       setQuizzesError(null);
       try {
-        const next = await getUserQuizzes();
+        const next = adminMode ? await getAllQuizzes() : await getUserQuizzes();
         if (!mounted) return;
         setQuizzes(next);
       } catch (error) {
@@ -71,7 +78,7 @@ export function UserQuizzesPage(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [adminMode]);
 
   useEffect(() => {
     let mounted = true;
@@ -143,7 +150,6 @@ export function UserQuizzesPage(): JSX.Element {
       const playValue = !quiz.isPublic && quiz.status === "published" && quiz.accessCode ? quiz.accessCode : quiz.id;
       const shareLink = buildPlayShareLink(playValue);
       const copied = clipboard.copied && lastCopiedQuizId === quiz.id;
-      const canEdit = quiz.status === "draft";
       const isPublished = quiz.status === "published";
       const isPrivate = !quiz.isPublic;
 
@@ -180,10 +186,10 @@ export function UserQuizzesPage(): JSX.Element {
               <Button component={Link} to="/create" variant="default" size="xs">
                 {t("userQuizzes.createNew")}
               </Button>
-              <Button component={Link} to={`/create?quizId=${quiz.id}`} variant="light" size="xs" disabled={!canEdit}>
+              <Button component={Link} to={`/create?quizId=${quiz.id}`} variant="light" size="xs">
                 {t("userQuizzes.editQuiz")}
               </Button>
-              {canEdit ? (
+              {!isPublished ? (
                 <Button
                   size="xs"
                   variant="light"
@@ -274,11 +280,18 @@ export function UserQuizzesPage(): JSX.Element {
               <Anchor component={Link} to={`/play/${playValue}`} size="sm">
                 {t("userQuizzes.openPlay")}
               </Anchor>
+              <Button
+                size="xs"
+                variant="light"
+                color="red"
+                leftSection={<IconTrash size={14} />}
+                loading={deletingQuizId === quiz.id}
+                onClick={() => setConfirmDeleteQuiz({ id: quiz.id, title: quiz.title })}
+              >
+                {t("userQuizzes.deleteQuiz")}
+              </Button>
             </Group>
-            {!canEdit ? (
-              <Text size="xs" c="dimmed">{t("userQuizzes.editLockedPublished")}</Text>
-            ) : null}
-            {canEdit ? (
+            {!isPublished ? (
               <Text size="xs" c="dimmed">{t("userQuizzes.shareLockedDraft")}</Text>
             ) : null}
           </Stack>
@@ -289,7 +302,17 @@ export function UserQuizzesPage(): JSX.Element {
 
   return (
     <Stack gap="md">
-      <Group justify="flex-end" align="center" wrap="wrap">
+      <Group justify="space-between" align="center" wrap="wrap">
+        {isAdmin ? (
+          <Button
+            variant={adminMode ? "filled" : "subtle"}
+            color={adminMode ? "red" : "gray"}
+            size="xs"
+            onClick={() => setAdminMode((prev) => !prev)}
+          >
+            {adminMode ? t("userQuizzes.adminModeActive") : t("userQuizzes.adminMode")}
+          </Button>
+        ) : <span />}
         <Button component={Link} to="/create">{t("userQuizzes.createNew")}</Button>
       </Group>
 
@@ -374,6 +397,39 @@ export function UserQuizzesPage(): JSX.Element {
           )}
         </Stack>
       </Modal>
+
+      <Modal
+        opened={Boolean(confirmDeleteQuiz)}
+        onClose={() => setConfirmDeleteQuiz(null)}
+        title={t("userQuizzes.deleteConfirmTitle")}
+        centered
+        size="sm"
+      >
+        <Text size="sm">{t("userQuizzes.deleteConfirmBody", { title: confirmDeleteQuiz?.title ?? "" })}</Text>
+        <Group mt="md" justify="flex-end">
+          <Button variant="light" onClick={() => setConfirmDeleteQuiz(null)}>{t("common.cancel")}</Button>
+          <Button
+            color="red"
+            loading={deletingQuizId === confirmDeleteQuiz?.id}
+            onClick={async () => {
+              if (!confirmDeleteQuiz) return;
+              setDeletingQuizId(confirmDeleteQuiz.id);
+              try {
+                await deleteQuiz(confirmDeleteQuiz.id, adminMode ? (import.meta.env.VITE_AI_GEN_PASSWORD ?? "") : undefined);
+                setQuizzes((current) => current.filter((q) => q.id !== confirmDeleteQuiz.id));
+                setConfirmDeleteQuiz(null);
+              } catch (error) {
+                setQuizzesError((error as Error).message ?? "Delete failed");
+              } finally {
+                setDeletingQuizId(null);
+              }
+            }}
+          >
+            {t("userQuizzes.deleteConfirm")}
+          </Button>
+        </Group>
+      </Modal>
+
     </Stack>
   );
 }
