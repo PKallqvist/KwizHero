@@ -18,6 +18,7 @@ import {
   where,
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
 import { getFirebaseServices } from "./firebase";
 import { routeDistanceMeters } from "../map/geolocation";
 import type { Coordinates } from "../map/geolocation";
@@ -37,7 +38,7 @@ import type {
   UserTokens,
 } from "../../domain/types";
 
-async function getAnonymousUid(): Promise<string> {
+async function getCurrentAuthUid(): Promise<string> {
   const { auth } = getFirebaseServices();
   if (auth.currentUser) return auth.currentUser.uid;
   const credential = await signInAnonymously(auth);
@@ -45,7 +46,7 @@ async function getAnonymousUid(): Promise<string> {
 }
 
 export async function getCurrentUserUid(): Promise<string> {
-  return getAnonymousUid();
+  return getCurrentAuthUid();
 }
 
 export interface PlayerBadgeProgressSnapshot extends BadgeProgressState {
@@ -84,7 +85,7 @@ function normalizeTokenNumber(value: unknown): number {
 
 export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnapshot> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const profileDoc = await getDoc(doc(db, "playerProfiles", uid));
 
   const profileData = profileDoc.data() as {
@@ -143,7 +144,7 @@ export async function getPlayerBadgeProgress(): Promise<PlayerBadgeProgressSnaps
 
 export async function savePlayerBadgeProgress(progress: PlayerBadgeProgressSnapshot): Promise<void> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   await setDoc(
     doc(db, "playerProfiles", uid),
     {
@@ -205,7 +206,7 @@ export async function seedAiAdminPreviewTokens(seedValue = 9999): Promise<UserTo
 
 export async function consumeAiToken(): Promise<AiTokenConsumeResult> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const profileRef = doc(db, "playerProfiles", uid);
 
   return runTransaction(db, async (transaction) => {
@@ -253,7 +254,7 @@ export async function storePlayerBadgeUnlocks(events: BadgeUnlockEvent[]): Promi
   if (events.length === 0) return;
 
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const progress = await getPlayerBadgeProgress();
 
   await Promise.all(
@@ -319,7 +320,7 @@ export async function markFirstDiscoveryProfileLabelSeen(): Promise<void> {
 
 export async function getPlayerEarnedBadges(): Promise<PlayerEarnedBadge[]> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const badgesSnapshot = await getDocs(
     query(collection(db, `playerProfiles/${uid}/earnedBadges`), orderBy("earnedAt", "desc"))
   );
@@ -687,7 +688,7 @@ export async function resolvePlayableQuizId(value: string): Promise<PlayValueRes
 
 async function assertQuizOwnership(quizId: string): Promise<void> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const snapshot = await getDoc(doc(db, "quizzes", quizId));
   if (!snapshot.exists()) {
     throw new Error("Quiz not found");
@@ -807,7 +808,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQuiz> {
   const { db } = getFirebaseServices();
-  const creatorUid = await getAnonymousUid();
+  const creatorUid = await getCurrentAuthUid();
   const editKey = randomKey();
   const editKeyHash = await sha256Hex(editKey);
   const wantsPublic = input.isPublic;
@@ -873,7 +874,6 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
 
 export async function getEditableQuizDraft(quizId: string): Promise<EditableQuizDraft> {
   const { db } = getFirebaseServices();
-  await assertQuizOwnership(quizId);
 
   const quizDoc = await getDoc(doc(db, "quizzes", quizId));
   const rulesDoc = await getDoc(doc(db, "quizRules", quizId));
@@ -983,11 +983,6 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
   if (!quizDoc.exists()) {
     throw new Error("Quiz not found");
   }
-  const status = (quizDoc.data() as { status?: "draft" | "published" }).status ?? "draft";
-  if (status !== "draft") {
-    throw new Error("Published quizzes cannot be edited as drafts");
-  }
-
   await updateDoc(doc(db, "quizzes", quizId), {
     title: input.title,
     description: input.description,
@@ -1042,7 +1037,7 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
 
 export async function getUserQuizzes(): Promise<QuizListItem[]> {
   const { db } = getFirebaseServices();
-  const creatorUid = await getAnonymousUid();
+  const creatorUid = await getCurrentAuthUid();
   const quizzesQuery = query(collection(db, "quizzes"), where("creatorUid", "==", creatorUid));
   const snapshot = await getDocs(quizzesQuery);
 
@@ -1108,9 +1103,46 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
   });
 }
 
+export async function getAllQuizzes(): Promise<QuizListItem[]> {
+  const { db } = getFirebaseServices();
+  const snapshot = await getDocs(collection(db, "quizzes"));
+
+  const quizzes: QuizListItem[] = snapshot.docs.map((quizDoc) => {
+    const data = quizDoc.data() as {
+      title?: string;
+      description?: string;
+      status?: "draft" | "published";
+      isPublic?: boolean;
+      accessCode?: string | null;
+      waypointCount?: number;
+      createdAt?: unknown;
+      updatedAt?: unknown;
+    };
+    return {
+      id: quizDoc.id,
+      title: data.title ?? "Untitled quiz",
+      description: data.description ?? "",
+      status: data.status ?? "draft",
+      isPublic: data.isPublic ?? false,
+      accessCode: data.accessCode ?? null,
+      validUntil: null,
+      waypointCount: data.waypointCount ?? 0,
+      routeDistanceKm: 0,
+      createdAt: toIsoOrNull(data.createdAt),
+      updatedAt: toIsoOrNull(data.updatedAt),
+    };
+  });
+
+  return quizzes.sort((a, b) => {
+    const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return bTime - aTime;
+  });
+}
+
 export async function getCreatorTotalCompletedPlays(): Promise<number> {
   const { db } = getFirebaseServices();
-  const creatorUid = await getAnonymousUid();
+  const creatorUid = await getCurrentAuthUid();
   const quizzesSnapshot = await getDocs(query(collection(db, "quizzes"), where("creatorUid", "==", creatorUid)));
   if (quizzesSnapshot.empty) return 0;
 
@@ -1216,7 +1248,7 @@ export async function getPublishedQuizDiscoveryItems(): Promise<PublishedQuizDis
 
 export async function getPlayerFavoriteQuizzes(): Promise<PlayerFavoriteQuizItem[]> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const snapshot = await getDocs(
     query(collection(db, `playerProfiles/${uid}/favoriteQuizzes`), orderBy("favoritedAt", "desc"))
   );
@@ -1236,7 +1268,7 @@ export async function getPlayerFavoriteQuizzes(): Promise<PlayerFavoriteQuizItem
 
 export async function setPlayerQuizFavorite(quizId: string, favorited: boolean): Promise<void> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const favoriteRef = doc(db, "playerProfiles", uid, "favoriteQuizzes", quizId);
 
   if (!favorited) {
@@ -1257,7 +1289,7 @@ export async function setPlayerQuizFavorite(quizId: string, favorited: boolean):
 
 export async function getPlayerQuizHistory(): Promise<PlayerQuizHistoryItem[]> {
   const { db } = getFirebaseServices();
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
   const snapshot = await getDocs(query(collection(db, "participantSessions"), where("anonymousUid", "==", uid)));
 
   const latestByQuiz = new Map<string, PlayerQuizHistoryItem & { sortTime: number }>();
@@ -1340,7 +1372,7 @@ export async function publishQuiz(quizId: string, _editKey: string): Promise<voi
   void _editKey;
   const { db } = getFirebaseServices();
   await assertQuizOwnership(quizId);
-  const uid = await getAnonymousUid();
+  const uid = await getCurrentAuthUid();
 
   const quizDoc = await getDoc(doc(db, "quizzes", quizId));
   if (!quizDoc.exists()) {
@@ -1498,7 +1530,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
 
 export async function startSession(quizId: string, nickname: string): Promise<string> {
   const { db } = getFirebaseServices();
-  const anonymousUid = await getAnonymousUid();
+  const anonymousUid = await getCurrentAuthUid();
   const sessionRef = await addDoc(collection(db, "participantSessions"), {
     quizId,
     nickname,
@@ -1677,4 +1709,18 @@ export async function submitFirstAnswer(params: {
     pointsAwarded,
     score: currentScore,
   };
+}
+
+export async function giftAiTokens(params: { targetUid?: string; targetEmail?: string; tokenCount: number }): Promise<{ uid: string; aiTokens: number }> {
+  const { functions } = getFirebaseServices();
+  const giftFn = httpsCallable<{ targetUid: string; targetEmail: string; tokenCount: number; adminPassword: string }, { uid: string; aiTokens: number }>(functions, "giftAiTokensCallable");
+  const adminPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
+  const result = await giftFn({ targetUid: params.targetUid ?? "", targetEmail: params.targetEmail ?? "", tokenCount: params.tokenCount, adminPassword });
+  return result.data;
+}
+
+export async function deleteQuiz(quizId: string, adminPassword?: string): Promise<void> {
+  const { functions } = getFirebaseServices();
+  const deleteQuizFn = httpsCallable(functions, "deleteQuizCallable");
+  await deleteQuizFn({ quizId, adminPassword: adminPassword ?? "" });
 }

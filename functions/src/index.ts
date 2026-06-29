@@ -499,3 +499,123 @@ export const publishQuizCallable = onCall({ invoker: "public" }, async (request)
 
   return { ok: true, status: "published" };
 });
+
+export const deleteQuizCallable = onCall({ invoker: "public" }, async (request) => {
+  const quizId = String(request.data?.quizId ?? "").trim();
+  const adminPassword = String(request.data?.adminPassword ?? "").trim();
+
+  if (!quizId) {
+    throw new HttpsError("invalid-argument", "quizId is required");
+  }
+
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const quizSnap = await db.collection("quizzes").doc(quizId).get();
+  if (!quizSnap.exists) {
+    throw new HttpsError("not-found", "Quiz not found");
+  }
+
+  const creatorUid = String(quizSnap.get("creatorUid") ?? "");
+  const isOwner = creatorUid === callerUid;
+  const configuredAdminPassword = process.env.ADMIN_PASSWORD ?? "";
+  const isAdmin = adminPassword.length > 0
+    && configuredAdminPassword.length > 0
+    && adminPassword === configuredAdminPassword;
+
+  if (!isOwner && !isAdmin) {
+    throw new HttpsError("permission-denied", "Not authorized to delete this quiz");
+  }
+
+  const quizRef = db.collection("quizzes").doc(quizId);
+
+  const waypointsSnap = await quizRef.collection("waypoints").get();
+  for (const waypointDoc of waypointsSnap.docs) {
+    const questionsSnap = await waypointDoc.ref.collection("questions").get();
+    for (const questionDoc of questionsSnap.docs) {
+      await questionDoc.ref.delete();
+    }
+    await waypointDoc.ref.delete();
+  }
+
+  await db.collection("quizSecrets").doc(quizId).delete().catch(() => {});
+  await db.collection("quizRules").doc(quizId).delete().catch(() => {});
+
+  const accessCodesSnap = await db.collection("quizAccessCodes")
+    .where("quizId", "==", quizId).get();
+  for (const codeDoc of accessCodesSnap.docs) {
+    await codeDoc.ref.delete();
+  }
+
+  const sessionsSnap = await db.collection("participantSessions")
+    .where("quizId", "==", quizId).get();
+  for (const sessionDoc of sessionsSnap.docs) {
+    const answersSnap = await sessionDoc.ref.collection("answers").get();
+    for (const answerDoc of answersSnap.docs) {
+      await answerDoc.ref.delete();
+    }
+    await sessionDoc.ref.delete();
+  }
+
+  await quizRef.delete();
+
+  return { ok: true };
+});
+
+export const giftAiTokensCallable = onCall({ invoker: "public" }, async (request) => {
+  const targetUid = String(request.data?.targetUid ?? "").trim();
+  const targetEmail = String(request.data?.targetEmail ?? "").trim();
+  const tokenCount = Number(request.data?.tokenCount ?? 0);
+  const adminPassword = String(request.data?.adminPassword ?? "").trim();
+
+  if (!targetUid && !targetEmail) {
+    throw new HttpsError("invalid-argument", "targetUid or targetEmail is required");
+  }
+  if (!Number.isFinite(tokenCount) || tokenCount < 1 || tokenCount > 99999) {
+    throw new HttpsError("invalid-argument", "tokenCount must be between 1 and 99999");
+  }
+
+  const configuredAdminPassword = process.env.ADMIN_PASSWORD ?? "";
+  const isAdmin = adminPassword.length > 0
+    && configuredAdminPassword.length > 0
+    && adminPassword === configuredAdminPassword;
+
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin access required");
+  }
+
+  let resolvedUid = targetUid;
+  if (!resolvedUid && targetEmail) {
+    const usersSnapshot = await db.collection("playerProfiles").get();
+    for (const userDoc of usersSnapshot.docs) {
+      resolvedUid = userDoc.id;
+      break;
+    }
+    if (!resolvedUid) {
+      throw new HttpsError("not-found", "No user found for that email");
+    }
+  }
+
+  const profileRef = db.collection("playerProfiles").doc(resolvedUid);
+  const profileSnap = await profileRef.get();
+
+  if (!profileSnap.exists) {
+    await profileRef.set({
+      aiTokens: tokenCount,
+      aiTokensGranted: tokenCount,
+      aiTokensPurchased: 0,
+      aiTokensUsed: 0,
+      aiTokensResetDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+  } else {
+    await profileRef.update({
+      aiTokens: FieldValue.increment(tokenCount),
+      aiTokensGranted: FieldValue.increment(tokenCount),
+    });
+  }
+
+  const updated = await profileRef.get();
+  return { ok: true, uid: resolvedUid, aiTokens: updated.get("aiTokens") ?? 0 };
+});
