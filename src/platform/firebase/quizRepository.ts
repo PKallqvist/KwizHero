@@ -1711,6 +1711,21 @@ export async function submitFirstAnswer(params: {
   };
 }
 
+export interface AdminUserResult {
+  uid: string;
+  email?: string;
+  displayName?: string;
+  aiTokens: number;
+}
+
+export async function searchUsers(queryStr: string): Promise<AdminUserResult[]> {
+  const { functions } = getFirebaseServices();
+  const searchFn = httpsCallable<{ query: string; adminPassword: string }, { users: AdminUserResult[] }>(functions, "searchUsersCallable");
+  const adminPassword = (import.meta.env.VITE_AI_GEN_PASSWORD ?? "").trim();
+  const result = await searchFn({ query: queryStr, adminPassword });
+  return result.data.users;
+}
+
 export async function giftAiTokens(params: { targetUid?: string; targetEmail?: string; tokenCount: number }): Promise<{ uid: string; aiTokens: number }> {
   const { functions } = getFirebaseServices();
   const giftFn = httpsCallable<{ targetUid: string; targetEmail: string; tokenCount: number; adminPassword: string }, { uid: string; aiTokens: number }>(functions, "giftAiTokensCallable");

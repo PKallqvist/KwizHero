@@ -8,6 +8,7 @@ import {
   IconLanguage,
   IconLogin,
   IconLogout,
+  IconShield,
   IconMapPin,
   IconMenu2,
   IconMoonStars,
@@ -54,11 +55,16 @@ const LoginPage = lazy(async () => {
   return { default: module.LoginPage };
 });
 
+const AdminPage = lazy(async () => {
+  const module = await import("./app/admin/AdminPage");
+  return { default: module.AdminPage };
+});
+
 function BottomBarAndDrawer(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const { session, profile } = useQuizSession();
-  const { isCreator, user, signOut } = useAuth();
+  const { isCreator, isAdmin, user, signOut } = useAuth();
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
@@ -197,6 +203,12 @@ function BottomBarAndDrawer(): JSX.Element {
                     <span className="kwiz-drawer-sublabel">{t("player.comingSoon")}</span>
                   </div>
                 </div>
+                {isAdmin ? (
+                  <button type="button" className="kwiz-drawer-item" onClick={() => navigateTo("/admin")}>
+                    <IconShield size={20} className="kwiz-drawer-icon" />
+                    <span className="kwiz-drawer-label">{t("nav.admin")}</span>
+                  </button>
+                ) : null}
                 {isCreator ? (
                   <button
                     type="button"
@@ -304,6 +316,7 @@ export function App(): JSX.Element {
               <Route path="/my-quizzes" element={<UserQuizzesPage />} />
               <Route path="/profile" element={<PlayerProfilePage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/admin" element={<AdminPage />} />
             </Routes>
           </Suspense>
         </div>
