@@ -57,4 +57,44 @@ describe("evaluateBadgeUnlocks", () => {
     expect(discovery?.tier).toBeNull();
     expect(discovery?.flavourText).toBe("Du slutförde ett quiz mitt i natten. De flesta sover just nu.");
   });
+
+  it("unlocks dead_eye on an exact tiebreaker guess, independent of the lottery", () => {
+    const events = evaluateBadgeUnlocks(
+      {
+        quizzesCompleted: 0,
+        quizzesCreatedPublished: 0,
+        quizzesPlayedTotal: 0,
+        playStreakDays: 0,
+        perfectQuizzesCompleted: 0,
+        lastCompletedQuizDate: null,
+        triggeredEventKeys: ["exact_tiebreaker_guess"],
+        earnedTierByBadgeId: {},
+        earnedDiscoveryBadgeIds: [],
+      },
+      "en"
+    );
+
+    const deadEye = events.find((event) => event.badgeId === "dead_eye");
+    expect(deadEye?.tier).toBeNull();
+    expect(deadEye?.xpReward).toBe(0);
+  });
+
+  it("does not re-offer a discovery badge that's already been earned", () => {
+    const events = evaluateBadgeUnlocks(
+      {
+        quizzesCompleted: 0,
+        quizzesCreatedPublished: 0,
+        quizzesPlayedTotal: 0,
+        playStreakDays: 0,
+        perfectQuizzesCompleted: 0,
+        lastCompletedQuizDate: null,
+        triggeredEventKeys: ["exact_tiebreaker_guess"],
+        earnedTierByBadgeId: {},
+        earnedDiscoveryBadgeIds: ["dead_eye"],
+      },
+      "en"
+    );
+
+    expect(events.some((event) => event.badgeId === "dead_eye")).toBe(false);
+  });
 });

@@ -57,6 +57,7 @@ import { evaluateBadgeUnlocks, type BadgeUnlockEvent, type BadgeLocale } from ".
 import type { AnswerResult, QuizSummary, QuizWalk, QuizWalkQuestion, QuizWalkWaypoint } from "../../domain/types";
 import type { Coordinates } from "../../platform/map/geolocation";
 import { QuestComplete } from "./QuestComplete";
+import { DiscoveryBadgeModal } from "./DiscoveryBadgeModal";
 
 type QuestionCardPhase = "back" | "pre_countdown" | "front";
 
@@ -1714,20 +1715,11 @@ export function PlayQuizPage(): JSX.Element {
         </button>
       ) : null}
       {activeDiscoveryBadge ? (
-        <div className="kwiz-discovery-overlay" role="dialog" aria-modal="true">
-          <div className="kwiz-discovery-shell">
-            <Text className="kwiz-discovery-label">{t("player.discoveryLabel")}</Text>
-            <div className="kwiz-discovery-icon" aria-hidden="true">🌙</div>
-            <Title order={2} className="kwiz-discovery-title">{activeDiscoveryBadge.event.displayName}</Title>
-            <Text className="kwiz-discovery-text">{activeDiscoveryBadge.event.flavourText}</Text>
-            <Button className="kwiz-discovery-cta" onClick={() => void dismissActiveDiscoveryBadge()}>
-              {t("player.badgeKeepGoing")}
-            </Button>
-            {activeDiscoveryBadge.showFirstHint ? (
-              <Text className="kwiz-discovery-hint">{t("player.discoveryFirstHint")}</Text>
-            ) : null}
-          </div>
-        </div>
+        <DiscoveryBadgeModal
+          event={activeDiscoveryBadge.event}
+          showFirstHint={activeDiscoveryBadge.showFirstHint}
+          onDismiss={() => void dismissActiveDiscoveryBadge()}
+        />
       ) : null}
     </Paper>
   );
