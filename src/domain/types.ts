@@ -115,6 +115,8 @@ export interface QuizListItem {
   routeDistanceKm?: number;
   createdAt: string | null;
   updatedAt: string | null;
+  rankedReveal: boolean;
+  closedAt: string | null;
 }
 
 export interface LeaderboardEntry {

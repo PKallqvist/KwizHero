@@ -1071,11 +1071,15 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
     };
 
     let validUntil: string | null = null;
+    let rankedReveal = false;
+    let closedAt: string | null = null;
     try {
       const rulesDoc = await getDoc(doc(db, "quizRules", quizDoc.id));
       if (rulesDoc.exists()) {
-        const rulesData = rulesDoc.data() as { closeAt?: string };
+        const rulesData = rulesDoc.data() as { closeAt?: string; rankedReveal?: boolean; closedAt?: string | null };
         validUntil = rulesData.closeAt ?? null;
+        rankedReveal = rulesData.rankedReveal ?? false;
+        closedAt = rulesData.closedAt ?? null;
       }
     } catch {
       validUntil = null;
@@ -1110,6 +1114,8 @@ export async function getUserQuizzes(): Promise<QuizListItem[]> {
       routeDistanceKm,
       createdAt: toIsoOrNull(data.createdAt),
       updatedAt: toIsoOrNull(data.updatedAt),
+      rankedReveal,
+      closedAt,
     };
   }));
 
@@ -1147,6 +1153,8 @@ export async function getAllQuizzes(): Promise<QuizListItem[]> {
       routeDistanceKm: 0,
       createdAt: toIsoOrNull(data.createdAt),
       updatedAt: toIsoOrNull(data.updatedAt),
+      rankedReveal: false,
+      closedAt: null,
     };
   });
 
@@ -1888,6 +1896,62 @@ export async function getQuizAnswerKey(quizId: string): Promise<QuestionReviewIt
     }
   }
   return items;
+}
+
+/**
+ * Creator-only action: closes the quiz (if not already closed) and computes its ranked
+ * results. This is the ONLY place that should ever trigger `resolveQuizResultsCallable` on
+ * behalf of a creator — the host reveal screen itself only ever reads the cached result of
+ * this call, never recomputes it.
+ */
+export async function closeQuizAndComputeResults(quizId: string): Promise<void> {
+  const { functions } = getFirebaseServices();
+  const closeFn = httpsCallable<{ quizId: string }, { ok: boolean; closedAt: string }>(functions, "closeQuizCallable");
+  await closeFn({ quizId });
+
+  const resolveFn = httpsCallable<{ quizId: string }, unknown>(functions, "resolveQuizResultsCallable");
+  await resolveFn({ quizId });
+}
+
+export interface HostQuizResults {
+  summary: QuizResultsSummary;
+  participants: ParticipantResult[];
+}
+
+/** Read-only: never computes results, only reads whatever has already been cached. */
+export async function getQuizResultsReadOnly(quizId: string): Promise<HostQuizResults | null> {
+  const { db } = getFirebaseServices();
+  const summaryDoc = await getDoc(doc(db, "quizResults", quizId));
+  if (!summaryDoc.exists() || summaryDoc.data().status !== "computed") {
+    return null;
+  }
+  const summaryData = summaryDoc.data() as {
+    quizId: string;
+    status: "computed";
+    computedAt?: unknown;
+    participantCount: number;
+    topGroupTiedGroupSize: number;
+    topGroupResolvedByLottery: boolean;
+  };
+
+  const participantsSnapshot = await getDocs(
+    query(collection(db, "participantResults"), where("quizId", "==", quizId))
+  );
+  const participants = participantsSnapshot.docs
+    .map((participantDoc) => participantDoc.data() as ParticipantResult)
+    .sort((a, b) => a.rank - b.rank);
+
+  return {
+    summary: {
+      quizId: summaryData.quizId,
+      status: "computed",
+      computedAt: toIsoOrNull(summaryData.computedAt) ?? "",
+      participantCount: summaryData.participantCount,
+      topGroupTiedGroupSize: summaryData.topGroupTiedGroupSize,
+      topGroupResolvedByLottery: summaryData.topGroupResolvedByLottery,
+    },
+    participants,
+  };
 }
 
 export interface AdminUserResult {

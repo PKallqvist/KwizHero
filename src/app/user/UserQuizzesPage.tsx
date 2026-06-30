@@ -20,6 +20,7 @@ import { IconAlertCircle, IconCheck, IconCopy, IconQrcode, IconTrash, IconTrophy
 import { useAuth } from "../../platform/context/AuthContext";
 import {
   buildPlayShareLink,
+  closeQuizAndComputeResults,
   deleteQuiz,
   getQuizLeaderboard,
   regenerateQuizAccessCode,
@@ -45,6 +46,8 @@ export function UserQuizzesPage(): JSX.Element {
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [publishingQuizId, setPublishingQuizId] = useState<string | null>(null);
   const [regeneratingQuizId, setRegeneratingQuizId] = useState<string | null>(null);
+  const [closingQuizId, setClosingQuizId] = useState<string | null>(null);
+  const [closeError, setCloseError] = useState<string | null>(null);
   const [deletingQuizId, setDeletingQuizId] = useState<string | null>(null);
   const [confirmDeleteQuiz, setConfirmDeleteQuiz] = useState<{ id: string; title: string } | null>(null);
   const [adminMode, setAdminMode] = useState(false);
@@ -277,6 +280,39 @@ export function UserQuizzesPage(): JSX.Element {
               >
                 {t("userQuizzes.leaderboard")}
               </Button>
+              {isPublished && quiz.rankedReveal ? (
+                <>
+                  {!quiz.closedAt ? (
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="orange"
+                      loading={closingQuizId === quiz.id}
+                      onClick={async () => {
+                        setClosingQuizId(quiz.id);
+                        setCloseError(null);
+                        try {
+                          await closeQuizAndComputeResults(quiz.id);
+                          setQuizzes((current) =>
+                            current.map((entry) =>
+                              entry.id === quiz.id ? { ...entry, closedAt: new Date().toISOString() } : entry
+                            )
+                          );
+                        } catch (error) {
+                          setCloseError((error as Error).message ?? t("userQuizzes.closeError"));
+                        } finally {
+                          setClosingQuizId((current) => (current === quiz.id ? null : current));
+                        }
+                      }}
+                    >
+                      {t("userQuizzes.closeAndReveal")}
+                    </Button>
+                  ) : null}
+                  <Anchor component={Link} to={`/host/${quiz.id}/reveal`} size="sm">
+                    {t("userQuizzes.hostScreen")}
+                  </Anchor>
+                </>
+              ) : null}
               <Anchor component={Link} to={`/play/${playValue}`} size="sm">
                 {t("userQuizzes.openPlay")}
               </Anchor>
@@ -298,7 +334,7 @@ export function UserQuizzesPage(): JSX.Element {
         </div>
       );
     });
-  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t, publishingQuizId]);
+  }, [clipboard, lastCopiedQuizId, quizzes, regeneratingQuizId, t, publishingQuizId, closingQuizId]);
 
   return (
     <Stack gap="md">
@@ -323,6 +359,12 @@ export function UserQuizzesPage(): JSX.Element {
       {quizzesError ? (
         <Alert color="red" icon={<IconAlertCircle size={16} />}>
           {t("userQuizzes.loadError")}
+        </Alert>
+      ) : null}
+
+      {closeError ? (
+        <Alert color="red" icon={<IconAlertCircle size={16} />} onClose={() => setCloseError(null)} withCloseButton>
+          {closeError}
         </Alert>
       ) : null}
 
