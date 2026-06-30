@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
     "slice:trophies": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/slice-trophies.ps1",
     "test": "vitest run",
     "test:watch": "vitest",
