@@ -39,7 +39,15 @@ import {
   updateQuizDraft,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, routeDistanceMeters } from "../../platform/map/geolocation";
-import type { DraftQuestionInput, DraftWaypointInput, QuestionType, QuestionOrderMode, QuizDraftInput, RouteMode } from "../../domain/types";
+import type {
+  DraftQuestionInput,
+  DraftWaypointInput,
+  QuestionType,
+  QuestionOrderMode,
+  QuizDraftInput,
+  RouteMode,
+  TiebreakerResolutionRule,
+} from "../../domain/types";
 import { useAuth } from "../../platform/context/AuthContext";
 import { CompactStepper } from "./components/CompactStepper";
 import { WaypointPicker, buildAnchoredManualLegPoints } from "./components/WaypointMapEditor";
@@ -180,10 +188,12 @@ export function CreateQuizPage(): JSX.Element {
     ruleset: {
       openAt: now.toISOString(),
       closeAt: plusDays.toISOString(),
+      closedAt: null,
       questionTimeLimitSeconds: null,
       interQuestionTimeLimitSeconds: null,
       revealMode: "scheduled",
       revealAt: plusDays.toISOString(),
+      rankedReveal: false,
       waypointGateRadiusMeters: 40,
       requireSequentialWaypoints: true,
       routeMode: "crow",
@@ -192,6 +202,7 @@ export function CreateQuizPage(): JSX.Element {
       questionOrderMode: "fixed",
       scoringStrategy: "binary_correct_1_point",
     },
+    tiebreaker: null,
   });
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState(0);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
@@ -226,6 +237,7 @@ export function CreateQuizPage(): JSX.Element {
 
   const currentWaypoint = input.waypoints[selectedWaypointIndex] ?? null;
   const currentQuestion = currentWaypoint?.questions[selectedQuestionIndex] ?? null;
+  const tiebreaker = input.tiebreaker;
 
   const { openAiGenerator, renderModals: renderAiModals } = useAiGenerator({
     currentQuestionType: currentQuestion?.questionType,
@@ -1186,15 +1198,19 @@ export function CreateQuizPage(): JSX.Element {
                   { value: "scheduled", label: t("creator.rules.revealScheduled") },
                 ]}
                 value={input.ruleset.revealMode}
-                onChange={(value) =>
+                onChange={(value) => {
+                  const nextRevealMode = (value ?? "scheduled") as "instant" | "on_completion" | "scheduled";
+                  const staysRanked = nextRevealMode === "scheduled" && input.ruleset.rankedReveal;
                   setInput({
                     ...input,
                     ruleset: {
                       ...input.ruleset,
-                      revealMode: (value ?? "scheduled") as "instant" | "on_completion" | "scheduled",
+                      revealMode: nextRevealMode,
+                      rankedReveal: staysRanked,
                     },
-                  })
-                }
+                    tiebreaker: staysRanked ? input.tiebreaker : null,
+                  });
+                }}
               />
               <NumberInput
                 label={t("creator.rules.labelWaypointRadius")}
@@ -1254,6 +1270,85 @@ export function CreateQuizPage(): JSX.Element {
               />
             </SimpleGrid>
 
+            {input.ruleset.revealMode === "scheduled" ? (
+              <Card withBorder radius="md" p="md">
+                <Stack gap="sm">
+                  <Switch
+                    label={t("creator.rules.labelRankedReveal")}
+                    description={t("creator.rules.rankedRevealHint")}
+                    checked={input.ruleset.rankedReveal}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setInput({
+                        ...input,
+                        ruleset: { ...input.ruleset, rankedReveal: checked },
+                        tiebreaker: checked ? input.tiebreaker : null,
+                      });
+                    }}
+                  />
+
+                  {input.ruleset.rankedReveal ? (
+                    <Stack gap="sm">
+                      <Switch
+                        label={t("creator.rules.labelIncludeTiebreaker")}
+                        checked={tiebreaker !== null}
+                        onChange={(event) =>
+                          setInput({
+                            ...input,
+                            tiebreaker: event.currentTarget.checked
+                              ? tiebreaker ?? { prompt: "", correctValue: 0, resolutionRule: "closest" }
+                              : null,
+                          })
+                        }
+                      />
+
+                      {tiebreaker ? (
+                        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                          <TextInput
+                            label={t("creator.rules.labelTiebreakerPrompt")}
+                            placeholder={t("creator.rules.tiebreakerPromptPlaceholder")}
+                            value={tiebreaker.prompt}
+                            onChange={(e) =>
+                              setInput({
+                                ...input,
+                                tiebreaker: { ...tiebreaker, prompt: e.currentTarget.value },
+                              })
+                            }
+                          />
+                          <NumberInput
+                            label={t("creator.rules.labelTiebreakerCorrectValue")}
+                            value={tiebreaker.correctValue}
+                            onChange={(value) =>
+                              setInput({
+                                ...input,
+                                tiebreaker: { ...tiebreaker, correctValue: Number(value) || 0 },
+                              })
+                            }
+                          />
+                          <Select
+                            label={t("creator.rules.labelTiebreakerRule")}
+                            data={[
+                              { value: "closest", label: t("creator.rules.tiebreakerRuleClosest") },
+                              { value: "closest_under", label: t("creator.rules.tiebreakerRuleClosestUnder") },
+                            ]}
+                            value={tiebreaker.resolutionRule}
+                            onChange={(value) =>
+                              setInput({
+                                ...input,
+                                tiebreaker: {
+                                  ...tiebreaker,
+                                  resolutionRule: (value ?? "closest") as TiebreakerResolutionRule,
+                                },
+                              })
+                            }
+                          />
+                        </SimpleGrid>
+                      ) : null}
+                    </Stack>
+                  ) : null}
+                </Stack>
+              </Card>
+            ) : null}
           </Stack>
         ) : null}
 
@@ -1789,6 +1884,13 @@ export function CreateQuizPage(): JSX.Element {
                 <List.Item>
                   {t("creator.publish.reviewRevealMode", { mode: input.ruleset.revealMode })}
                 </List.Item>
+                {input.ruleset.rankedReveal ? (
+                  <List.Item>
+                    {input.tiebreaker
+                      ? t("creator.publish.reviewRankedReveal", { prompt: input.tiebreaker.prompt })
+                      : t("creator.publish.reviewRankedRevealNoTiebreaker")}
+                  </List.Item>
+                ) : null}
               </List>
             </Card>
             <Card withBorder radius="md">

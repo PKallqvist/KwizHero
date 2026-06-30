@@ -50,6 +50,7 @@ import {
   startSession,
   storePlayerBadgeUnlocks,
   submitFirstAnswer,
+  submitTiebreakerGuess,
 } from "../../platform/firebase/quizRepository";
 import { distanceMeters, formatDistanceMeters, getCurrentCoordinates, routeDistanceMeters } from "../../platform/map/geolocation";
 import { evaluateBadgeUnlocks, type BadgeUnlockEvent, type BadgeLocale } from "../../domain/badges";
@@ -259,6 +260,10 @@ export function PlayQuizPage(): JSX.Element {
 
   const [answerResult, setAnswerResult] = useState<AnswerResult | null>(null);
   const [sessionComplete, setSessionComplete] = useState(false);
+  const [tiebreakerPending, setTiebreakerPending] = useState(false);
+  const [tiebreakerGuessInput, setTiebreakerGuessInput] = useState<number | null>(null);
+  const [tiebreakerSubmitting, setTiebreakerSubmitting] = useState(false);
+  const [pendingCompletionMeta, setPendingCompletionMeta] = useState<{ isPerfectCompletion: boolean } | null>(null);
   const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
   const [currentScore, setCurrentScore] = useState(0);
   const [tieredBadgeQueue, setTieredBadgeQueue] = useState<BadgeUnlockEvent[]>([]);
@@ -1004,6 +1009,14 @@ export function PlayQuizPage(): JSX.Element {
         return;
       }
 
+      const nextAnswered = [...answeredQuestionIds, currentQuestion.id];
+      const lockedWaypoint = quizWalk.waypoints[lockedWaypointIndex];
+      const nextQuestionIdx = lockedWaypoint.questions.findIndex(
+        (question) => !nextAnswered.includes(question.id)
+      );
+      const nextWaypointIndex = nextQuestionIdx >= 0 ? null : getNextWaypointIndex(nextAnswered);
+      const isFinalAnswer = nextQuestionIdx < 0 && nextWaypointIndex === null;
+
       const result = await submitFirstAnswer({
         quizId: resolvedQuizId,
         sessionId,
@@ -1013,6 +1026,7 @@ export function PlayQuizPage(): JSX.Element {
         numericAnswer: questionType === "numeric" ? numericAnswer : null,
         letterOrderAnswer: questionType === "letter_order" ? letterOrderAnswer : null,
         elapsedMs,
+        isFinalAnswer,
       });
       setAnswerResult(result);
       setCurrentScore(result.score);
@@ -1020,13 +1034,7 @@ export function PlayQuizPage(): JSX.Element {
         setCorrectAnswersCount((previous) => previous + 1);
       }
 
-      const nextAnswered = [...answeredQuestionIds, currentQuestion.id];
       setAnsweredQuestionIds(nextAnswered);
-
-      const lockedWaypoint = quizWalk.waypoints[lockedWaypointIndex];
-      const nextQuestionIdx = lockedWaypoint.questions.findIndex(
-        (question) => !nextAnswered.includes(question.id)
-      );
 
       if (nextQuestionIdx >= 0) {
         setActiveQuestionIndex(nextQuestionIdx);
@@ -1039,13 +1047,22 @@ export function PlayQuizPage(): JSX.Element {
         return;
       }
 
-      const nextWaypointIndex = getNextWaypointIndex(nextAnswered);
       if (nextWaypointIndex === null) {
         const totalQuestionCount = quizWalk.waypoints.reduce(
           (sum, waypoint) => sum + waypoint.questions.length,
           0
         );
         const isPerfectCompletion = correctAnswersCount + (result.isCorrect ? 1 : 0) === totalQuestionCount;
+        setLockedWaypointIndex(null);
+        setPendingQuestionResume(false);
+        setWaypointClearedState(null);
+
+        if (summary?.rankedReveal && quizWalk.tiebreaker) {
+          setPendingCompletionMeta({ isPerfectCompletion });
+          setTiebreakerPending(true);
+          return;
+        }
+
         try {
           await queueBadgeUnlocksForCompletion({
             completedAt: new Date(),
@@ -1055,9 +1072,6 @@ export function PlayQuizPage(): JSX.Element {
           // badge unlock processing should never block quiz completion
         }
         setSessionComplete(true);
-        setLockedWaypointIndex(null);
-        setPendingQuestionResume(false);
-        setWaypointClearedState(null);
         return;
       }
 
@@ -1084,10 +1098,37 @@ export function PlayQuizPage(): JSX.Element {
     }
   }
 
-  const showGameplay = Boolean(sessionId && quizWalk && !debugMode && !sessionComplete);
+  async function submitTiebreakerAnswer(): Promise<void> {
+    if (!sessionId || tiebreakerGuessInput === null) {
+      setError(t("player.errorNumericRequired"));
+      return;
+    }
+    setError(null);
+    setTiebreakerSubmitting(true);
+    try {
+      await submitTiebreakerGuess(sessionId, tiebreakerGuessInput);
+      setTiebreakerPending(false);
+      try {
+        await queueBadgeUnlocksForCompletion({
+          completedAt: new Date(),
+          isPerfectCompletion: pendingCompletionMeta?.isPerfectCompletion ?? false,
+        });
+      } catch {
+        // badge unlock processing should never block quiz completion
+      }
+      setSessionComplete(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTiebreakerSubmitting(false);
+    }
+  }
+
+  const showTiebreakerScreen = Boolean(tiebreakerPending && quizWalk?.tiebreaker && !debugMode);
+  const showGameplay = Boolean(sessionId && quizWalk && !debugMode && !sessionComplete && !showTiebreakerScreen);
   const showCompletionScreen = Boolean(sessionComplete && summary && quizWalk && !debugMode);
-  const showPreGame = !showGameplay && !showCompletionScreen;
-  const showImmersivePlayerScreen = showGameplay || showCompletionScreen || showPreGame;
+  const showPreGame = !showGameplay && !showCompletionScreen && !showTiebreakerScreen;
+  const showImmersivePlayerScreen = showGameplay || showCompletionScreen || showPreGame || showTiebreakerScreen;
   const waypointClearedMode = showGameplay && waypointClearedState !== null;
   const journeyMode = showGameplay && lockedWaypointIndex === null && !waypointClearedMode;
   const cardMode = showGameplay && lockedWaypointIndex !== null && currentQuestion;
@@ -1275,6 +1316,40 @@ export function PlayQuizPage(): JSX.Element {
             distanceKm={totalRouteDistance / 1000}
             onDismiss={() => navigate("/")}
           />
+        ) : null}
+
+        {showTiebreakerScreen && quizWalk?.tiebreaker ? (
+          <div className="kwiz-player-phone-shell">
+            <div className="kwiz-adventure-shell kwiz-player-fill-card-hidden kwiz-player-phone-card">
+              <div className="kwiz-adventure-question-shell">
+                <div className="kwiz-adventure-question-header">
+                  <Text className="kwiz-adventure-topline">{t("player.tiebreakerTopline")}</Text>
+                  <Title order={3}>{quizWalk.tiebreaker.prompt}</Title>
+                  <Text c="dimmed">{t("player.tiebreakerHint")}</Text>
+                </div>
+                <NumberInput
+                  label={t("player.tiebreakerInputLabel")}
+                  value={tiebreakerGuessInput ?? undefined}
+                  onChange={(value) => setTiebreakerGuessInput(typeof value === "number" ? value : null)}
+                  size="lg"
+                />
+                {error ? (
+                  <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+                    {error}
+                  </Alert>
+                ) : null}
+                <Button
+                  size="lg"
+                  fullWidth
+                  loading={tiebreakerSubmitting}
+                  onClick={() => void submitTiebreakerAnswer()}
+                  disabled={tiebreakerGuessInput === null}
+                >
+                  {t("player.tiebreakerSubmit")}
+                </Button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {waypointClearedMode && waypointClearedState ? (

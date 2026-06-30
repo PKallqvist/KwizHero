@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Button, Group, Loader, Modal, Text, useMantineColorScheme } from "@mantine/core";
@@ -19,6 +19,8 @@ import {
 } from "@tabler/icons-react";
 import { QuizSessionProvider, useQuizSession } from "./platform/context/QuizSessionContext";
 import { AuthProvider, useAuth } from "./platform/context/AuthContext";
+import { getPendingResultNotifications } from "./platform/firebase/quizRepository";
+import type { PendingResultNotification } from "./domain/types";
 
 const CreateQuizPage = lazy(async () => {
   const module = await import("./app/creator/CreateQuizPage");
@@ -60,6 +62,11 @@ const AdminPage = lazy(async () => {
   return { default: module.AdminPage };
 });
 
+const ResultsRevealPage = lazy(async () => {
+  const module = await import("./app/player/ResultsRevealPage");
+  return { default: module.ResultsRevealPage };
+});
+
 function BottomBarAndDrawer(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -68,8 +75,29 @@ function BottomBarAndDrawer(): JSX.Element {
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
+  const [pendingResults, setPendingResults] = useState<PendingResultNotification[]>([]);
 
   const quizActive = session !== null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshPendingResults(): Promise<void> {
+      try {
+        const notifications = await getPendingResultNotifications();
+        if (!cancelled) setPendingResults(notifications);
+      } catch {
+        // notification chip is best-effort; never block the app on it
+      }
+    }
+
+    void refreshPendingResults();
+    const intervalId = window.setInterval(() => void refreshPendingResults(), 120_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   function closeDrawer(): void {
     setDrawerOpen(false);
@@ -78,6 +106,12 @@ function BottomBarAndDrawer(): JSX.Element {
   function navigateTo(path: string): void {
     navigate(path);
     closeDrawer();
+  }
+
+  function openPendingResult(): void {
+    const next = pendingResults[0];
+    if (!next) return;
+    navigateTo(`/results/${next.sessionId}`);
   }
 
   return (
@@ -101,6 +135,11 @@ function BottomBarAndDrawer(): JSX.Element {
             <div className="kwiz-bar-chips">
               <span className="kwiz-xp-chip">⚡ {profile.xpTotal.toLocaleString("sv-SE")}</span>
               <span className="kwiz-streak-chip">🔥 {profile.streakDays}</span>
+              {pendingResults.length > 0 ? (
+                <button type="button" className="kwiz-streak-chip" onClick={openPendingResult}>
+                  🏆 {t("player.resultsReadyChip", { count: pendingResults.length })}
+                </button>
+              ) : null}
             </div>
           </>
         )}
@@ -317,6 +356,7 @@ export function App(): JSX.Element {
               <Route path="/profile" element={<PlayerProfilePage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/admin" element={<AdminPage />} />
+              <Route path="/results/:sessionId" element={<ResultsRevealPage />} />
             </Routes>
           </Suspense>
         </div>

@@ -27,14 +27,19 @@ import type {
   AnswerResult,
   FirstPlayable,
   LeaderboardEntry,
+  ParticipantResult,
+  PendingResultNotification,
   PlayerEarnedBadge,
   QuestionOrderMode,
+  QuestionReviewItem,
   QuizDraftInput,
   QuizListItem,
+  QuizResultsSummary,
   RouteMode,
   QuizSummary,
   QuizWalk,
   QuestionType,
+  Tiebreaker,
   UserTokens,
 } from "../../domain/types";
 
@@ -828,6 +833,7 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     updatedAt: serverTimestamp(),
     waypointCount: input.waypoints.length,
     creatorUid,
+    tiebreaker: input.tiebreaker,
   });
 
   await setDoc(doc(db, "quizSecrets", quizRef.id), {
@@ -839,10 +845,12 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     rulesetVersion: 1,
     openAt: input.ruleset.openAt,
     closeAt: input.ruleset.closeAt,
+    closedAt: input.ruleset.closedAt,
     questionTimeLimitSeconds: input.ruleset.questionTimeLimitSeconds,
     interQuestionTimeLimitSeconds: input.ruleset.interQuestionTimeLimitSeconds,
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
+    rankedReveal: input.ruleset.rankedReveal,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
@@ -892,14 +900,17 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
     isAnonymous?: boolean;
     defaultLocale?: "en" | "sv";
     status?: "draft" | "published";
+    tiebreaker?: Tiebreaker | null;
   };
   const rulesData = rulesDoc.data() as {
     openAt?: string;
     closeAt?: string;
+    closedAt?: string | null;
     questionTimeLimitSeconds?: number | null;
     interQuestionTimeLimitSeconds?: number | null;
     revealMode?: "instant" | "on_completion" | "scheduled";
     revealAt?: string | null;
+    rankedReveal?: boolean;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
     routeMode?: RouteMode;
@@ -959,10 +970,12 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
       ruleset: {
         openAt: rulesData.openAt ?? new Date().toISOString(),
         closeAt: rulesData.closeAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        closedAt: rulesData.closedAt ?? null,
         questionTimeLimitSeconds: rulesData.questionTimeLimitSeconds ?? null,
         interQuestionTimeLimitSeconds: rulesData.interQuestionTimeLimitSeconds ?? null,
         revealMode: rulesData.revealMode ?? "instant",
         revealAt: rulesData.revealAt ?? null,
+        rankedReveal: rulesData.rankedReveal ?? false,
         waypointGateRadiusMeters: rulesData.waypointGateRadiusMeters ?? 40,
         requireSequentialWaypoints: rulesData.requireSequentialWaypoints ?? true,
         routeMode: rulesData.routeMode ?? "crow",
@@ -971,6 +984,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
         questionOrderMode: rulesData.questionOrderMode ?? "fixed",
         scoringStrategy: rulesData.scoringStrategy ?? "binary_correct_1_point",
       },
+      tiebreaker: quizData.tiebreaker ?? null,
     },
   };
 }
@@ -993,6 +1007,7 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     isAnonymous: input.isAnonymous,
     defaultLocale: input.locale,
     waypointCount: input.waypoints.length,
+    tiebreaker: input.tiebreaker,
     updatedAt: serverTimestamp(),
   });
 
@@ -1017,10 +1032,12 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     rulesetVersion: 1,
     openAt: input.ruleset.openAt,
     closeAt: input.ruleset.closeAt,
+    closedAt: input.ruleset.closedAt,
     questionTimeLimitSeconds: input.ruleset.questionTimeLimitSeconds,
     interQuestionTimeLimitSeconds: input.ruleset.interQuestionTimeLimitSeconds,
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
+    rankedReveal: input.ruleset.rankedReveal,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
@@ -1429,14 +1446,17 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     organizerAvatarUrl?: string | null;
     organizerSwish?: string | null;
     isAnonymous?: boolean;
+    tiebreaker?: Tiebreaker | null;
   };
   const r = rulesDoc.data() as {
     openAt: string;
     closeAt: string;
+    closedAt?: string | null;
     questionTimeLimitSeconds: number | null;
     interQuestionTimeLimitSeconds: number | null;
     revealMode: "instant" | "on_completion" | "scheduled";
     revealAt: string | null;
+    rankedReveal?: boolean;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
     routeMode?: RouteMode;
@@ -1458,14 +1478,17 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     isAnonymous: q.isAnonymous ?? false,
     openAt: r.openAt,
     closeAt: r.closeAt,
+    closedAt: r.closedAt ?? null,
     questionTimeLimitSeconds: r.questionTimeLimitSeconds ?? null,
     interQuestionTimeLimitSeconds: r.interQuestionTimeLimitSeconds ?? null,
     revealMode: r.revealMode ?? "instant",
     revealAt: r.revealAt ?? null,
+    rankedReveal: r.rankedReveal ?? false,
     waypointGateRadiusMeters: r.waypointGateRadiusMeters ?? 40,
     requireSequentialWaypoints: r.requireSequentialWaypoints ?? true,
     routeMode: r.routeMode ?? "crow",
     questionOrderMode: r.questionOrderMode ?? "fixed",
+    tiebreaker: q.tiebreaker ?? null,
   };
 }
 
@@ -1476,7 +1499,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
     return null;
   }
 
-  const quizData = quizDoc.data() as { title: string };
+  const quizData = quizDoc.data() as { title: string; tiebreaker?: Tiebreaker | null };
   const waypointQuery = query(collection(db, `quizzes/${quizId}/waypoints`), orderBy("order", "asc"));
   const waypointSnapshot = await getDocs(waypointQuery);
 
@@ -1525,7 +1548,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
     })
   );
 
-  return { quizId, title: quizData.title, waypoints };
+  return { quizId, title: quizData.title, waypoints, tiebreaker: quizData.tiebreaker ?? null };
 }
 
 export async function startSession(quizId: string, nickname: string): Promise<string> {
@@ -1621,6 +1644,7 @@ export async function submitFirstAnswer(params: {
   numericAnswer?: number | null;
   letterOrderAnswer?: string | null;
   elapsedMs: number;
+  isFinalAnswer: boolean;
 }): Promise<AnswerResult> {
   const { db } = getFirebaseServices();
   const questionDoc = await getDoc(
@@ -1697,8 +1721,7 @@ export async function submitFirstAnswer(params: {
 
   await updateDoc(doc(db, "participantSessions", params.sessionId), {
     score: increment(pointsAwarded),
-    status: "completed",
-    completedAt: serverTimestamp(),
+    ...(params.isFinalAnswer ? { status: "completed", completedAt: serverTimestamp() } : {}),
   });
 
   const sessionDoc = await getDoc(doc(db, "participantSessions", params.sessionId));
@@ -1709,6 +1732,162 @@ export async function submitFirstAnswer(params: {
     pointsAwarded,
     score: currentScore,
   };
+}
+
+export async function submitTiebreakerGuess(sessionId: string, guess: number): Promise<void> {
+  const { db } = getFirebaseServices();
+  await updateDoc(doc(db, "participantSessions", sessionId), {
+    tiebreakerGuess: guess,
+  });
+}
+
+export function getCurrentUserUidIfSignedIn(): string | null {
+  try {
+    const { auth } = getFirebaseServices();
+    return auth.currentUser?.uid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPendingResultNotifications(): Promise<PendingResultNotification[]> {
+  const uid = getCurrentUserUidIfSignedIn();
+  if (!uid) return [];
+
+  const { db } = getFirebaseServices();
+  const notificationsQuery = query(
+    collection(db, "participantSessions"),
+    where("anonymousUid", "==", uid),
+    where("resultReady", "==", true),
+    where("resultSeenAt", "==", null)
+  );
+  const snapshot = await getDocs(notificationsQuery);
+  if (snapshot.empty) return [];
+
+  const quizIds = [...new Set(snapshot.docs.map((d) => String(d.data().quizId ?? "")).filter(Boolean))];
+  const titleByQuizId = new Map<string, string>();
+  await Promise.all(
+    quizIds.map(async (quizId) => {
+      const quizDoc = await getDoc(doc(db, "quizzes", quizId));
+      titleByQuizId.set(quizId, quizDoc.exists() ? String(quizDoc.data()?.title ?? "") : "");
+    })
+  );
+
+  return snapshot.docs.map((sessionDoc) => {
+    const quizId = String(sessionDoc.data().quizId ?? "");
+    return {
+      sessionId: sessionDoc.id,
+      quizId,
+      quizTitle: titleByQuizId.get(quizId) ?? "",
+    };
+  });
+}
+
+export async function markResultSeen(sessionId: string): Promise<void> {
+  const { db } = getFirebaseServices();
+  await updateDoc(doc(db, "participantSessions", sessionId), {
+    resultSeenAt: new Date().toISOString(),
+  });
+}
+
+export interface QuizResultsForParticipant {
+  quizId: string;
+  quizTitle: string;
+  tiebreaker: Tiebreaker | null;
+  myResult: ParticipantResult;
+  participantCount: number | null;
+}
+
+export async function getQuizResultsForSession(sessionId: string): Promise<QuizResultsForParticipant> {
+  const { db, functions } = getFirebaseServices();
+  const sessionDoc = await getDoc(doc(db, "participantSessions", sessionId));
+  if (!sessionDoc.exists()) {
+    throw new Error("Session not found");
+  }
+  const quizId = String(sessionDoc.data().quizId ?? "");
+  if (!quizId) {
+    throw new Error("Session has no quiz");
+  }
+
+  const quizDoc = await getDoc(doc(db, "quizzes", quizId));
+  const quizTitle = quizDoc.exists() ? String(quizDoc.data()?.title ?? "") : "";
+  const tiebreaker = quizDoc.exists() ? ((quizDoc.data()?.tiebreaker as Tiebreaker | null | undefined) ?? null) : null;
+
+  const resolveFn = httpsCallable<
+    { quizId: string },
+    { summary: QuizResultsSummary | null; participants: ParticipantResult[] }
+  >(functions, "resolveQuizResultsCallable");
+  const response = await resolveFn({ quizId });
+  const myResult = response.data.participants.find((p) => p.participantId === sessionId);
+  if (!myResult) {
+    throw new Error("Result not found for this session");
+  }
+
+  return {
+    quizId,
+    quizTitle,
+    tiebreaker,
+    myResult,
+    participantCount: response.data.summary?.participantCount ?? null,
+  };
+}
+
+function formatCorrectAnswer(data: {
+  questionType?: QuestionType;
+  choices?: Array<{ id: string; text: string }>;
+  correctChoiceIds?: string[];
+  correctChoiceId?: string | null;
+  numericAnswer?: number | null;
+  letterOrderAnswer?: string | null;
+}): string {
+  const questionType = data.questionType ?? "multiple_choice";
+  if (questionType === "numeric") {
+    return data.numericAnswer !== null && data.numericAnswer !== undefined ? String(data.numericAnswer) : "";
+  }
+  if (questionType === "letter_order") {
+    return data.letterOrderAnswer ?? "";
+  }
+  const correctIds = Array.isArray(data.correctChoiceIds)
+    ? data.correctChoiceIds
+    : data.correctChoiceId
+      ? [data.correctChoiceId]
+      : [];
+  const choices = data.choices ?? [];
+  return correctIds
+    .map((id) => choices.find((choice) => choice.id === id)?.text ?? "")
+    .filter((text) => text.length > 0)
+    .join(", ");
+}
+
+export async function getQuizAnswerKey(quizId: string): Promise<QuestionReviewItem[]> {
+  const { db } = getFirebaseServices();
+  const waypointSnapshot = await getDocs(query(collection(db, `quizzes/${quizId}/waypoints`), orderBy("order", "asc")));
+
+  const items: QuestionReviewItem[] = [];
+  for (const waypointDoc of waypointSnapshot.docs) {
+    const waypointTitle = String(waypointDoc.data().title ?? "");
+    const questionSnapshot = await getDocs(
+      query(collection(db, `quizzes/${quizId}/waypoints/${waypointDoc.id}/questions`), orderBy("order", "asc"))
+    );
+    for (const questionDoc of questionSnapshot.docs) {
+      const data = questionDoc.data() as {
+        questionType?: QuestionType;
+        text?: string;
+        choices?: Array<{ id: string; text: string }>;
+        correctChoiceIds?: string[];
+        correctChoiceId?: string | null;
+        numericAnswer?: number | null;
+        letterOrderAnswer?: string | null;
+      };
+      items.push({
+        questionId: questionDoc.id,
+        waypointTitle,
+        questionText: data.text ?? "",
+        correctAnswerText: formatCorrectAnswer(data),
+      });
+    }
+  }
+  return items;
 }
 
 export interface AdminUserResult {

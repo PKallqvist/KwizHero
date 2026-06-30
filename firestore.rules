@@ -90,6 +90,16 @@ service cloud.firestore {
       }
     }
 
+    match /quizResults/{quizId} {
+      allow read: if true;
+      allow write: if false; // written only by resolveQuizResultsCallable via Admin SDK
+    }
+
+    match /participantResults/{sessionId} {
+      allow read: if true;
+      allow write: if false; // written only by resolveQuizResultsCallable via Admin SDK
+    }
+
     match /playerProfiles/{uid} {
       allow read, create, update: if request.auth != null && request.auth.uid == uid;
 

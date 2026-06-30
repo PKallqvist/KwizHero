@@ -3,6 +3,7 @@
 
 interface ImportMetaEnv {
 	readonly VITE_AI_GEN_PASSWORD?: string;
+	readonly VITE_USE_FIREBASE_EMULATORS?: string;
 }
 
 interface ImportMeta {

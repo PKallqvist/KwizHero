@@ -4,6 +4,7 @@ import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { resolveResults, type ParticipantScoreInput, type TiebreakerInput } from "./resultsWaterfall";
 
 type AiProvider = "anthropic" | "openai";
 
@@ -558,8 +559,11 @@ export const deleteQuizCallable = onCall({ invoker: "public" }, async (request) 
     for (const answerDoc of answersSnap.docs) {
       await answerDoc.ref.delete();
     }
+    await db.collection("participantResults").doc(sessionDoc.id).delete().catch(() => {});
     await sessionDoc.ref.delete();
   }
+
+  await db.collection("quizResults").doc(quizId).delete().catch(() => {});
 
   await quizRef.delete();
 
@@ -668,4 +672,147 @@ export const searchUsersCallable = onCall({ invoker: "public" }, async (request)
   }
 
   return { users: results };
+});
+
+async function readCachedResults(quizId: string): Promise<{ summary: FirebaseFirestore.DocumentData | null; participants: FirebaseFirestore.DocumentData[] }> {
+  const summarySnap = await db.collection("quizResults").doc(quizId).get();
+  const participantResultsSnap = await db.collection("participantResults").where("quizId", "==", quizId).get();
+  return {
+    summary: summarySnap.exists ? summarySnap.data() ?? null : null,
+    participants: participantResultsSnap.docs.map((d) => d.data()),
+  };
+}
+
+export const closeQuizCallable = onCall({ invoker: "public" }, async (request) => {
+  const quizId = String(request.data?.quizId ?? "").trim();
+  if (!quizId) {
+    throw new HttpsError("invalid-argument", "quizId is required");
+  }
+
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const quizSnap = await db.collection("quizzes").doc(quizId).get();
+  if (!quizSnap.exists) {
+    throw new HttpsError("not-found", "Quiz not found");
+  }
+  if (quizSnap.get("creatorUid") !== callerUid) {
+    throw new HttpsError("permission-denied", "Not authorized to close this quiz");
+  }
+
+  const rulesRef = db.collection("quizRules").doc(quizId);
+  const rulesSnap = await rulesRef.get();
+  if (!rulesSnap.exists) {
+    throw new HttpsError("not-found", "Quiz rules not found");
+  }
+
+  const existingClosedAt = rulesSnap.get("closedAt");
+  if (existingClosedAt) {
+    return { ok: true, closedAt: existingClosedAt };
+  }
+
+  const closedAt = new Date().toISOString();
+  await rulesRef.update({ closedAt, updatedAt: FieldValue.serverTimestamp() });
+
+  return { ok: true, closedAt };
+});
+
+export const resolveQuizResultsCallable = onCall({ invoker: "public" }, async (request) => {
+  const quizId = String(request.data?.quizId ?? "").trim();
+  if (!quizId) {
+    throw new HttpsError("invalid-argument", "quizId is required");
+  }
+
+  const rulesSnap = await db.collection("quizRules").doc(quizId).get();
+  if (!rulesSnap.exists) {
+    throw new HttpsError("not-found", "Quiz rules not found");
+  }
+  if (!rulesSnap.get("rankedReveal")) {
+    throw new HttpsError("failed-precondition", "Quiz does not use ranked reveal");
+  }
+
+  const closeAt = String(rulesSnap.get("closeAt") ?? "");
+  const closedAt = (rulesSnap.get("closedAt") as string | null | undefined) ?? null;
+  const closeAtHasPassed = closeAt.length > 0 && Date.now() >= new Date(closeAt).getTime();
+  const effectiveCloseAt = closedAt ?? (closeAtHasPassed ? closeAt : null);
+  if (!effectiveCloseAt) {
+    throw new HttpsError("failed-precondition", "Quiz has not closed yet");
+  }
+
+  const resultsRef = db.collection("quizResults").doc(quizId);
+
+  const computeState = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(resultsRef);
+    if (snap.exists) {
+      return String(snap.get("status") ?? "computing");
+    }
+    tx.set(resultsRef, { quizId, status: "computing", startedAt: FieldValue.serverTimestamp() });
+    return "started";
+  });
+
+  if (computeState === "computed") {
+    return readCachedResults(quizId);
+  }
+  if (computeState !== "started") {
+    throw new HttpsError("aborted", "Results are already being computed, try again shortly");
+  }
+
+  const quizSnap = await db.collection("quizzes").doc(quizId).get();
+  const tiebreakerData = quizSnap.get("tiebreaker") as
+    | { correctValue: number; resolutionRule: "closest" | "closest_under" }
+    | null
+    | undefined;
+  const tiebreaker: TiebreakerInput | null = tiebreakerData
+    ? { correctValue: tiebreakerData.correctValue, resolutionRule: tiebreakerData.resolutionRule }
+    : null;
+
+  const sessionsSnap = await db.collection("participantSessions")
+    .where("quizId", "==", quizId)
+    .where("status", "==", "completed")
+    .get();
+
+  const participants: ParticipantScoreInput[] = [];
+  for (const sessionDoc of sessionsSnap.docs) {
+    const answersSnap = await sessionDoc.ref.collection("answers").get();
+    const recomputedScore = answersSnap.docs.reduce((sum, a) => sum + (Number(a.get("pointsAwarded")) || 0), 0);
+    participants.push({
+      participantId: sessionDoc.id,
+      nickname: String(sessionDoc.get("nickname") ?? "Player"),
+      score: recomputedScore,
+      totalQuestions: answersSnap.size,
+      tiebreakerGuess: (sessionDoc.get("tiebreakerGuess") as number | null | undefined) ?? null,
+    });
+  }
+
+  const results = resolveResults({
+    quizId,
+    participants,
+    tiebreaker,
+    lotterySeed: `${quizId}:${effectiveCloseAt}`,
+  });
+
+  const batch = db.batch();
+  for (const result of results) {
+    batch.set(db.collection("participantResults").doc(result.participantId), result);
+    batch.update(db.collection("participantSessions").doc(result.participantId), {
+      resultReady: true,
+      resultSeenAt: null,
+    });
+  }
+
+  const topResult = results.find((r) => r.rank === 1) ?? null;
+  batch.set(resultsRef, {
+    quizId,
+    status: "computed",
+    computedAt: FieldValue.serverTimestamp(),
+    participantCount: results.length,
+    topGroupTiedGroupSize: topResult?.tiedGroupSize ?? 1,
+    topGroupResolvedByLottery: topResult?.resolvedByLottery ?? false,
+  });
+
+  await batch.commit();
+
+  return readCachedResults(quizId);
 });
