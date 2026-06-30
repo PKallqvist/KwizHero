@@ -35,6 +35,7 @@ import type {
   QuizSummary,
   QuizWalk,
   QuestionType,
+  Tiebreaker,
   UserTokens,
 } from "../../domain/types";
 
@@ -828,6 +829,7 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     updatedAt: serverTimestamp(),
     waypointCount: input.waypoints.length,
     creatorUid,
+    tiebreaker: input.tiebreaker,
   });
 
   await setDoc(doc(db, "quizSecrets", quizRef.id), {
@@ -839,10 +841,12 @@ export async function createDraftQuiz(input: QuizDraftInput): Promise<CreatedQui
     rulesetVersion: 1,
     openAt: input.ruleset.openAt,
     closeAt: input.ruleset.closeAt,
+    closedAt: input.ruleset.closedAt,
     questionTimeLimitSeconds: input.ruleset.questionTimeLimitSeconds,
     interQuestionTimeLimitSeconds: input.ruleset.interQuestionTimeLimitSeconds,
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
+    rankedReveal: input.ruleset.rankedReveal,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
@@ -892,14 +896,17 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
     isAnonymous?: boolean;
     defaultLocale?: "en" | "sv";
     status?: "draft" | "published";
+    tiebreaker?: Tiebreaker | null;
   };
   const rulesData = rulesDoc.data() as {
     openAt?: string;
     closeAt?: string;
+    closedAt?: string | null;
     questionTimeLimitSeconds?: number | null;
     interQuestionTimeLimitSeconds?: number | null;
     revealMode?: "instant" | "on_completion" | "scheduled";
     revealAt?: string | null;
+    rankedReveal?: boolean;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
     routeMode?: RouteMode;
@@ -959,10 +966,12 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
       ruleset: {
         openAt: rulesData.openAt ?? new Date().toISOString(),
         closeAt: rulesData.closeAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        closedAt: rulesData.closedAt ?? null,
         questionTimeLimitSeconds: rulesData.questionTimeLimitSeconds ?? null,
         interQuestionTimeLimitSeconds: rulesData.interQuestionTimeLimitSeconds ?? null,
         revealMode: rulesData.revealMode ?? "instant",
         revealAt: rulesData.revealAt ?? null,
+        rankedReveal: rulesData.rankedReveal ?? false,
         waypointGateRadiusMeters: rulesData.waypointGateRadiusMeters ?? 40,
         requireSequentialWaypoints: rulesData.requireSequentialWaypoints ?? true,
         routeMode: rulesData.routeMode ?? "crow",
@@ -971,6 +980,7 @@ export async function getEditableQuizDraft(quizId: string): Promise<EditableQuiz
         questionOrderMode: rulesData.questionOrderMode ?? "fixed",
         scoringStrategy: rulesData.scoringStrategy ?? "binary_correct_1_point",
       },
+      tiebreaker: quizData.tiebreaker ?? null,
     },
   };
 }
@@ -993,6 +1003,7 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     isAnonymous: input.isAnonymous,
     defaultLocale: input.locale,
     waypointCount: input.waypoints.length,
+    tiebreaker: input.tiebreaker,
     updatedAt: serverTimestamp(),
   });
 
@@ -1017,10 +1028,12 @@ export async function updateQuizDraft(quizId: string, input: QuizDraftInput): Pr
     rulesetVersion: 1,
     openAt: input.ruleset.openAt,
     closeAt: input.ruleset.closeAt,
+    closedAt: input.ruleset.closedAt,
     questionTimeLimitSeconds: input.ruleset.questionTimeLimitSeconds,
     interQuestionTimeLimitSeconds: input.ruleset.interQuestionTimeLimitSeconds,
     revealMode: input.ruleset.revealMode,
     revealAt: input.ruleset.revealAt,
+    rankedReveal: input.ruleset.rankedReveal,
     waypointGateRadiusMeters: input.ruleset.waypointGateRadiusMeters,
     requireSequentialWaypoints: input.ruleset.requireSequentialWaypoints,
     routeMode: input.ruleset.routeMode,
@@ -1429,14 +1442,17 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     organizerAvatarUrl?: string | null;
     organizerSwish?: string | null;
     isAnonymous?: boolean;
+    tiebreaker?: Tiebreaker | null;
   };
   const r = rulesDoc.data() as {
     openAt: string;
     closeAt: string;
+    closedAt?: string | null;
     questionTimeLimitSeconds: number | null;
     interQuestionTimeLimitSeconds: number | null;
     revealMode: "instant" | "on_completion" | "scheduled";
     revealAt: string | null;
+    rankedReveal?: boolean;
     waypointGateRadiusMeters?: number;
     requireSequentialWaypoints?: boolean;
     routeMode?: RouteMode;
@@ -1458,14 +1474,17 @@ export async function getQuizSummary(quizId: string): Promise<QuizSummary | null
     isAnonymous: q.isAnonymous ?? false,
     openAt: r.openAt,
     closeAt: r.closeAt,
+    closedAt: r.closedAt ?? null,
     questionTimeLimitSeconds: r.questionTimeLimitSeconds ?? null,
     interQuestionTimeLimitSeconds: r.interQuestionTimeLimitSeconds ?? null,
     revealMode: r.revealMode ?? "instant",
     revealAt: r.revealAt ?? null,
+    rankedReveal: r.rankedReveal ?? false,
     waypointGateRadiusMeters: r.waypointGateRadiusMeters ?? 40,
     requireSequentialWaypoints: r.requireSequentialWaypoints ?? true,
     routeMode: r.routeMode ?? "crow",
     questionOrderMode: r.questionOrderMode ?? "fixed",
+    tiebreaker: q.tiebreaker ?? null,
   };
 }
 
@@ -1476,7 +1495,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
     return null;
   }
 
-  const quizData = quizDoc.data() as { title: string };
+  const quizData = quizDoc.data() as { title: string; tiebreaker?: Tiebreaker | null };
   const waypointQuery = query(collection(db, `quizzes/${quizId}/waypoints`), orderBy("order", "asc"));
   const waypointSnapshot = await getDocs(waypointQuery);
 
@@ -1525,7 +1544,7 @@ export async function getQuizWalk(quizId: string): Promise<QuizWalk | null> {
     })
   );
 
-  return { quizId, title: quizData.title, waypoints };
+  return { quizId, title: quizData.title, waypoints, tiebreaker: quizData.tiebreaker ?? null };
 }
 
 export async function startSession(quizId: string, nickname: string): Promise<string> {

@@ -2,6 +2,7 @@ export type RevealMode = "instant" | "on_completion" | "scheduled";
 export type QuestionType = "multiple_choice" | "numeric" | "letter_order";
 export type RouteMode = "none" | "crow" | "urban" | "hiking" | "manual";
 export type QuestionOrderMode = "fixed" | "any";
+export type TiebreakerResolutionRule = "closest" | "closest_under";
 
 export interface QuestionConfig {
   timerSeconds: number | null;
@@ -11,10 +12,12 @@ export interface QuestionConfig {
 export interface Ruleset {
   openAt: string;
   closeAt: string;
+  closedAt: string | null;
   questionTimeLimitSeconds: number | null;
   interQuestionTimeLimitSeconds: number | null;
   revealMode: RevealMode;
   revealAt: string | null;
+  rankedReveal: boolean;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
   routeMode: RouteMode;
@@ -22,6 +25,12 @@ export interface Ruleset {
   routeLegCoordinates: Array<Array<{ lat: number; lng: number }>>;
   questionOrderMode: QuestionOrderMode;
   scoringStrategy: "binary_correct_1_point";
+}
+
+export interface Tiebreaker {
+  prompt: string;
+  correctValue: number;
+  resolutionRule: TiebreakerResolutionRule;
 }
 
 export interface DraftQuestionInput {
@@ -63,6 +72,7 @@ export interface QuizDraftInput {
   isAnonymous: boolean;
   waypoints: DraftWaypointInput[];
   ruleset: Ruleset;
+  tiebreaker: Tiebreaker | null;
 }
 
 export interface QuizSummary {
@@ -80,14 +90,17 @@ export interface QuizSummary {
   isAnonymous: boolean;
   openAt: string;
   closeAt: string;
+  closedAt: string | null;
   questionTimeLimitSeconds: number | null;
   interQuestionTimeLimitSeconds: number | null;
   revealMode: RevealMode;
   revealAt: string | null;
+  rankedReveal: boolean;
   waypointGateRadiusMeters: number;
   requireSequentialWaypoints: boolean;
   routeMode: RouteMode;
   questionOrderMode: QuestionOrderMode;
+  tiebreaker: Tiebreaker | null;
 }
 
 export interface QuizListItem {
@@ -136,6 +149,7 @@ export interface QuizWalk {
   quizId: string;
   title: string;
   waypoints: QuizWalkWaypoint[];
+  tiebreaker: Tiebreaker | null;
 }
 
 export interface Waypoint {
@@ -181,4 +195,26 @@ export interface PlayerEarnedBadge {
   xpReward: number;
   imageKey: string | null;
   earnedAt: string | null;
+}
+
+export interface ParticipantResult {
+  participantId: string;
+  quizId: string;
+  nickname: string;
+  score: number;
+  totalQuestions: number;
+  rank: number;
+  tiebreakerGuess?: number;
+  tiebreakerDistance?: number;
+  resolvedByLottery: boolean;
+  tiedGroupSize?: number;
+}
+
+export interface QuizResultsSummary {
+  quizId: string;
+  status: "computed";
+  computedAt: string;
+  participantCount: number;
+  topGroupTiedGroupSize: number;
+  topGroupResolvedByLottery: boolean;
 }
