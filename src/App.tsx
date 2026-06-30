@@ -67,6 +67,11 @@ const ResultsRevealPage = lazy(async () => {
   return { default: module.ResultsRevealPage };
 });
 
+const HostRevealPage = lazy(async () => {
+  const module = await import("./app/creator/HostRevealPage");
+  return { default: module.HostRevealPage };
+});
+
 function BottomBarAndDrawer(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
@@ -357,6 +362,7 @@ export function App(): JSX.Element {
               <Route path="/login" element={<LoginPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/results/:sessionId" element={<ResultsRevealPage />} />
+              <Route path="/host/:quizId/reveal" element={<HostRevealPage />} />
             </Routes>
           </Suspense>
         </div>

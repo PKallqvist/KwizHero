@@ -4,20 +4,35 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Group, Loader, Stack, Text, Title } from "@mantine/core";
 import { IconAlertCircle, IconTrophy } from "@tabler/icons-react";
 import {
+  getPlayerBadgeProgress,
   getQuizAnswerKey,
   getQuizResultsForSession,
+  markFirstDiscoverySeen,
   markResultSeen,
+  savePlayerBadgeProgress,
+  storePlayerBadgeUnlocks,
   type QuizResultsForParticipant,
 } from "../../platform/firebase/quizRepository";
+import { evaluateBadgeUnlocks, type BadgeLocale, type BadgeUnlockEvent } from "../../domain/badges";
 import type { QuestionReviewItem } from "../../domain/types";
 import { useCountUp } from "./useCountUp";
+import { DiscoveryBadgeModal } from "./DiscoveryBadgeModal";
 
 type Stage = "score" | "tiebreaker" | "lottery" | "rank";
 
+function resolveBadgeLocale(language: string): BadgeLocale {
+  return language.startsWith("sv") ? "sv" : "en";
+}
+
 const ADVANCE_DELAY_MS = 1200;
 
+interface DiscoveryState {
+  event: BadgeUnlockEvent;
+  showFirstHint: boolean;
+}
+
 export function ResultsRevealPage(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
 
@@ -28,10 +43,35 @@ export function ResultsRevealPage(): JSX.Element {
   const [stepIndex, setStepIndex] = useState(0);
   const [canAdvance, setCanAdvance] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [discoveryBadge, setDiscoveryBadge] = useState<DiscoveryState | null>(null);
+  const [discoveryDismissed, setDiscoveryDismissed] = useState(false);
 
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+
+    async function unlockDeadEyeBadge(): Promise<void> {
+      try {
+        const progress = await getPlayerBadgeProgress();
+        if (progress.earnedDiscoveryBadgeIds.includes("dead_eye")) return;
+
+        const isFirstDiscoveryEver = !progress.firstDiscoverySeen && progress.earnedDiscoveryBadgeIds.length === 0;
+        const nextProgress = {
+          ...progress,
+          triggeredEventKeys: [...new Set([...progress.triggeredEventKeys, "exact_tiebreaker_guess"])],
+        };
+        await savePlayerBadgeProgress(nextProgress);
+
+        const unlocked = evaluateBadgeUnlocks(nextProgress, resolveBadgeLocale(i18n.resolvedLanguage ?? i18n.language));
+        const deadEyeEvent = unlocked.find((event) => event.badgeId === "dead_eye");
+        if (deadEyeEvent && !cancelled) {
+          await storePlayerBadgeUnlocks([deadEyeEvent]);
+          setDiscoveryBadge({ event: deadEyeEvent, showFirstHint: isFirstDiscoveryEver });
+        }
+      } catch {
+        // achievement unlocking is best-effort; never block the reveal sequence
+      }
+    }
 
     async function load(): Promise<void> {
       setLoading(true);
@@ -41,6 +81,10 @@ export function ResultsRevealPage(): JSX.Element {
         if (cancelled) return;
         setData(results);
         void markResultSeen(sessionId as string).catch(() => {});
+
+        if (results.myResult.tiebreakerDistance === 0) {
+          void unlockDeadEyeBadge();
+        }
 
         const questions = await getQuizAnswerKey(results.quizId);
         if (!cancelled) setReviewItems(questions);
@@ -55,7 +99,7 @@ export function ResultsRevealPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, i18n]);
 
   const myResult = data?.myResult ?? null;
   const showTiebreakerStage = Boolean(
@@ -146,6 +190,19 @@ export function ResultsRevealPage(): JSX.Element {
               : t("results.tiebreakerOff", { distance: myResult.tiebreakerDistance })}
           </Text>
         </Stack>
+      ) : null}
+
+      {currentStage === "tiebreaker" && discoveryBadge && !discoveryDismissed ? (
+        <DiscoveryBadgeModal
+          event={discoveryBadge.event}
+          showFirstHint={discoveryBadge.showFirstHint}
+          onDismiss={() => {
+            setDiscoveryDismissed(true);
+            if (discoveryBadge.showFirstHint) {
+              void markFirstDiscoverySeen().catch(() => {});
+            }
+          }}
+        />
       ) : null}
 
       {currentStage === "lottery" ? (

@@ -497,6 +497,18 @@ export const BADGE_CATALOG = [
     imageKey: null,
     triggerEventKey: "pace_master",
   },
+  {
+    id: "dead_eye",
+    type: "discovery",
+    name: makeLocalizedText("Dead Eye", "Skarpskytt"),
+    icon: "ti-star",
+    flavourText: makeLocalizedText(
+      "You guessed the tiebreaker exactly right. Some things you just know.",
+      "Du gissade utslagsfrågan helt exakt. Vissa saker vet man bara."
+    ),
+    imageKey: null,
+    triggerEventKey: "exact_tiebreaker_guess",
+  },
 ] as const satisfies readonly BadgeDefinition[];
 
 export function localizeBadgeText(text: BadgeText, locale: BadgeLocale): string {
