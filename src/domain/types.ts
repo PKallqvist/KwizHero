@@ -218,3 +218,16 @@ export interface QuizResultsSummary {
   topGroupTiedGroupSize: number;
   topGroupResolvedByLottery: boolean;
 }
+
+export interface PendingResultNotification {
+  sessionId: string;
+  quizId: string;
+  quizTitle: string;
+}
+
+export interface QuestionReviewItem {
+  questionId: string;
+  waypointTitle: string;
+  questionText: string;
+  correctAnswerText: string;
+}

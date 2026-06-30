@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Button, Text, Title } from "@mantine/core";
+import { useCountUp } from "./useCountUp";
 
 const QUEST_TONE = {
   headline: "Quest Complete!",
@@ -28,25 +29,6 @@ interface QuestCompleteProps {
   streak: number;
   distanceKm: number;
   onDismiss: () => void;
-}
-
-function useCountUp(target: number, durationMs: number, active: boolean): number {
-  const [value, setValue] = useState(0);
-  useEffect(() => {
-    if (!active) { setValue(0); return; }
-    const start = performance.now();
-    let raf: number;
-    const tick = (now: number) => {
-      const elapsed = Math.min(now - start, durationMs);
-      const progress = elapsed / durationMs;
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(target * eased));
-      if (elapsed < durationMs) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, durationMs, active]);
-  return value;
 }
 
 function getTierPhrase(percent: number): string {

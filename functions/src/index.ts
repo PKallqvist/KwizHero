@@ -796,7 +796,10 @@ export const resolveQuizResultsCallable = onCall({ invoker: "public" }, async (r
   const batch = db.batch();
   for (const result of results) {
     batch.set(db.collection("participantResults").doc(result.participantId), result);
-    batch.update(db.collection("participantSessions").doc(result.participantId), { resultReady: true });
+    batch.update(db.collection("participantSessions").doc(result.participantId), {
+      resultReady: true,
+      resultSeenAt: null,
+    });
   }
 
   const topResult = results.find((r) => r.rank === 1) ?? null;
